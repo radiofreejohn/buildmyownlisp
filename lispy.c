@@ -567,7 +567,7 @@ lval* lval_read_bool(mpc_ast_t* t) {
 
 lval* lval_read_str(mpc_ast_t* t) {
     t->contents[strlen(t->contents)-1] = '\0';
-    char* unescaped = strdup(t->contents + 1)
+    char* unescaped = strdup(t->contents + 1);
     unescaped = mpcf_unescape(unescaped);
     lval* str = lval_str(unescaped);
     free(unescaped);
