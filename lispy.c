@@ -39,8 +39,6 @@ struct lval {
     long num;
 
     /* error and symbol have some string data */
-    char* err;
-    char* sym;
     char* str;
     lbuiltin builtin;
     lenv* env;
@@ -270,10 +268,10 @@ lval* lval_eq(lval* x, lval* y) {
         case LVAL_BOOL:
         case LVAL_NUM: 
             return lval_bool((x->num == y->num)); break;
+        /* LVAL_STR, LVAL_ERR, LVAL_SYM all contain a string */
         case LVAL_STR:
-            return lval_bool((strcmp(x->str, y->str) == 0)); break;
-        case LVAL_ERR: return lval_bool((strcmp(x->err, y->err) == 0)); break;
-        case LVAL_SYM: return lval_bool((strcmp(x->sym, y->sym) == 0)); break;
+        case LVAL_ERR:
+        case LVAL_SYM: return lval_bool((strcmp(x->str, y->str) == 0)); break;
         case LVAL_FUN:
            if (x->builtin) {
                return lval_bool((x->builtin == y->builtin));
@@ -328,13 +326,13 @@ lval* lval_err(char* fmt, ...) {
     va_start(va, fmt);
 
     /* allocate 512 bytes of space (why 512?) */
-    v->err = malloc(512);
+    v->str = malloc(512);
 
     /* printf into the error string with max of 511 characters */
-    vsnprintf(v->err, 511, fmt, va);
+    vsnprintf(v->str, 511, fmt, va);
 
     /* reallocate to number of bytes actually used */
-    v->err = realloc(v->err, strlen(v->err)+1);
+    v->str = realloc(v->str, strlen(v->str)+1);
 
     /* clean up va list */
     va_end(va);
@@ -353,8 +351,7 @@ lval* lval_builtin(lbuiltin func) {
 lval* lval_sym(char* s) {
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_SYM;
-    v->sym = malloc(strlen(s) + 1);
-    strcpy(v->sym, s);
+    v->str = strdup(s);
     return v;
 }
 
@@ -381,7 +378,6 @@ void lval_del(lval* v) {
     switch (v->type) {
         case LVAL_BOOL: break;
         case LVAL_NUM: break;
-        case LVAL_STR: free(v->str); break;
         case LVAL_FUN:
             if (!v->builtin) {
                    lenv_del(v->env);
@@ -390,9 +386,10 @@ void lval_del(lval* v) {
             }
             break;
     
-        /* for err or sym free the string data */
-        case LVAL_ERR: free(v->err); break;
-        case LVAL_SYM: free(v->sym); break;
+        /* free string data */
+        case LVAL_STR:
+        case LVAL_ERR:
+        case LVAL_SYM: free(v->str); break;
 
         /* for sexpr delete all elements inside */
         case LVAL_QEXPR:
@@ -494,7 +491,7 @@ lval* lval_call(lenv* e, lval* f, lval* a) {
 
         // pop the first symbol from formals
         lval* sym = lval_pop(f->formals, 0);
-        if (strcmp(sym->sym, "&") == 0) {
+        if (strcmp(sym->str, "&") == 0) {
             // ensure & is followed by another symbol
             if (f->formals->count != 1) {
                 lval_del(a);
@@ -521,7 +518,7 @@ lval* lval_call(lenv* e, lval* f, lval* a) {
 
     lval_del(a);
 
-    if (f->formals->count > 0 && (strcmp(f->formals->cell[0]->sym, "&") == 0)) {
+    if (f->formals->count > 0 && (strcmp(f->formals->cell[0]->str, "&") == 0)) {
         // check to ensure that & is not passed invalidly
         if (f->formals->count != 2) {
             return lval_err("Function format invalid. Symbol '&' not followed by a single symbol.");
@@ -901,11 +898,11 @@ lval* lval_copy(lval* v) {
            break;
         case LVAL_BOOL:
         case LVAL_NUM: x->num = v->num; break;
-        case LVAL_STR: x->str = malloc(strlen(v->str) + 1); strcpy(x->str, v->str); break;
 
         /* copy strings using malloc and strcpy */
-        case LVAL_ERR: x->err = malloc(strlen(v->err) + 1); strcpy(x->err, v->err); break;
-        case LVAL_SYM: x->sym = malloc(strlen(v->sym) + 1); strcpy(x->sym, v->sym); break;
+        case LVAL_STR:
+        case LVAL_ERR:
+        case LVAL_SYM: x->str = strdup(v->str); break;
 
         /* copy lists by copying each sub expression */
         case LVAL_SEXPR:
@@ -953,8 +950,8 @@ void lval_print(lval* v) {
         case LVAL_STR:   lval_print_str(v); break;
         case LVAL_NUM:   printf("%li", v->num); break;
         case LVAL_BOOL:  printf("%s", v->num ? "true" : "false"); break;
-        case LVAL_ERR:   printf("Error: %s", v->err); break;
-        case LVAL_SYM:   printf("%s", v->sym); break;
+        case LVAL_ERR:   printf("Error: %s", v->str); break;
+        case LVAL_SYM:   printf("%s", v->str); break;
         case LVAL_SEXPR: lval_expr_print(v, '(', ')'); break;
         case LVAL_QEXPR: lval_expr_print(v, '{', '}'); break;
     }
@@ -999,7 +996,7 @@ lval* lenv_get(lenv* e, lval* k) {
         /* check if the stored string matches the symbol string
          * if it does, return a copy of the value 
          */
-        if (strcmp(e->syms[i], k->sym) == 0) {
+        if (strcmp(e->syms[i], k->str) == 0) {
             return lval_copy(e->vals[i]);
         }
     }
@@ -1008,7 +1005,7 @@ lval* lenv_get(lenv* e, lval* k) {
         return lenv_get(e->par, k);
     } else {
         /* if no symbol found, return error */
-        return lval_err("Unbound symbol '%s'", k->sym);
+        return lval_err("Unbound symbol '%s'", k->str);
     }
 }
 
@@ -1018,12 +1015,12 @@ void lenv_put(lenv* e, lval* k, lval* v) {
         /* if variable is found, delete item at that position and
          * replace with variable supplied by user
          */
-        if (strcmp(e->syms[i], k->sym) == 0) {
+        if (strcmp(e->syms[i], k->str) == 0) {
             lval_del(e->vals[i]);
             e->vals[i] = lval_copy(v);
             // sizeof(char) should always be 1 
-            e->syms[i] = realloc(e->syms[i], strlen(k->sym)+1);
-            strcpy(e->syms[i], k->sym);
+            e->syms[i] = realloc(e->syms[i], strlen(k->str)+1);
+            strcpy(e->syms[i], k->str);
             return;
         }
     }
@@ -1036,8 +1033,7 @@ void lenv_put(lenv* e, lval* k, lval* v) {
     /* copy contents of lval and symbol string into new loc */
     e->vals[e->count-1] = lval_copy(v);
     // should v be deleted?
-    e->syms[e->count-1] = malloc(strlen(k->sym)+1);
-    strcpy(e->syms[e->count-1], k->sym);
+    e->syms[e->count-1] = strdup(k->str);
 }
 
 void lenv_add_builtin(lenv* e, char* name, lbuiltin func) {
