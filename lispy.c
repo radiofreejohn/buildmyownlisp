@@ -256,8 +256,7 @@ lval* lval_num(long x) {
 lval* lval_str(char* s) {
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_STR;
-    v->str = malloc(strlen(s) + 1);
-    strcpy(v->str, s);
+    v->str = strdup(s);
     return v;
 }
 
@@ -568,8 +567,7 @@ lval* lval_read_bool(mpc_ast_t* t) {
 
 lval* lval_read_str(mpc_ast_t* t) {
     t->contents[strlen(t->contents)-1] = '\0';
-    char* unescaped = malloc(strlen(t->contents+1)+1);
-    strcpy(unescaped, t->contents + 1);
+    char* unescaped = strdup(t->contents + 1)
     unescaped = mpcf_unescape(unescaped);
     lval* str = lval_str(unescaped);
     free(unescaped);
@@ -899,7 +897,7 @@ lval* lval_copy(lval* v) {
         case LVAL_BOOL:
         case LVAL_NUM: x->num = v->num; break;
 
-        /* copy strings using malloc and strcpy */
+        /* copy strings using strdup */
         case LVAL_STR:
         case LVAL_ERR:
         case LVAL_SYM: x->str = strdup(v->str); break;
@@ -963,8 +961,7 @@ void lval_println(lval* v) {
 }
 
 void lval_print_str(lval* v) {
-    char* escaped = malloc(strlen(v->str) + 1);
-    strcpy(escaped, v->str);
+    char* escaped = strdup(v->str);
     escaped = mpcf_escape(escaped);
     printf("\"%s\"", escaped);
     free(escaped);
@@ -1086,8 +1083,7 @@ lenv* lenv_copy(lenv* e) {
 
     for (int i = 0; i < e->count; i++) {
         // could accomplish the same with strdup
-        n->syms[i] = malloc(strlen(e->syms[i]) + 1);
-        strcpy(n->syms[i], e->syms[i]);
+        n->syms[i] = strdup(e->syms[i]);
         n->vals[i] = lval_copy(e->vals[i]);
     }
     return n;
