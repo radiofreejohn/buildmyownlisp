@@ -36,7 +36,7 @@ typedef lval*(*lbuiltin)(lenv*, lval*);
 
 struct lval {
     int type;
-    long num;
+    float num;
 
     /* error and symbol have some string data */
     char* str;
@@ -58,6 +58,7 @@ struct lenv {
 };
 // forward delcare parser names
 mpc_parser_t*   Number;
+mpc_parser_t*   Float;
 mpc_parser_t*   Bool;
 mpc_parser_t*   String;
 mpc_parser_t*   Symbol;
@@ -69,7 +70,7 @@ mpc_parser_t*   Lispy;
 
 lval* lval_eval_sexpr(lenv*, lval*);
 lval* lval_eval(lenv*, lval*);
-lval* lval_num(long);
+lval* lval_long(long);
 lval* lval_str(char*);
 lval* lval_bool(bool);
 lval* lval_err(char*, ...);
@@ -80,6 +81,7 @@ lval* lval_take(lval*, int);
 lval* lval_eq(lval*, lval*);
 
 lval* builtin_op(lenv*, lval*, char*);
+lval* builtin_unary(lenv*, lval*, char*);
 lval* builtin_add(lenv*, lval*);
 lval* builtin_sub(lenv*, lval*);
 lval* builtin_mul(lenv*, lval*);
@@ -96,6 +98,7 @@ lval* builtin_put(lenv*, lval*);
 
 //hacks
 lval* bool_negate(lval*);
+lval* builtin_negate(lenv*, lval*);
 lval* builtin_eq(lenv*, lval*);
 lval* builtin_ne(lenv*, lval*);
 lval* builtin_lt(lenv*, lval*);
@@ -117,8 +120,10 @@ lval* lval_call(lenv*, lval*, lval*);
 
 lval* lval_add(lval*, lval*);
 lval* lval_read_num(mpc_ast_t*);
+lval* lval_float(float);
 lval* lval_read(mpc_ast_t*);
-
+lval* lval_read_bool(mpc_ast_t*);
+lval* lval_read_str(mpc_ast_t*);
 void lval_expr_print(lval*, char, char);
 void lval_print(lval*);
 void lval_print_str(lval*);
@@ -143,7 +148,8 @@ lval* lval_lambda(lval*, lval*);
 /* Possible lval types */
 enum {
     LVAL_ERR,
-    LVAL_NUM,
+    LVAL_LONG,
+    LVAL_FLOAT,
     LVAL_BOOL,
     LVAL_STR,
     LVAL_SYM,
@@ -174,9 +180,9 @@ int main(int argc, char **argv) {
 	/* Define them with the following Language */
 	mpca_lang(MPC_LANG_DEFAULT,
 		  "                                                      \
-            number   : /-?[0-9]+/ ;                              \
+            number   : /-?([0-9]*\\.)?([0-9]+)/ ;                \
             bool     : /true|false/ ;                            \
-            string   :/\"(\\\\.|[^\"])*\"/ ;                     \
+            string   : /\"(\\\\.|[^\"])*\"/ ;                    \
             symbol   : /[a-zA-Z0-9_+\\-*\\/\\\\=<>!&]+/ ;        \
             comment  : /;[^\\r\\n]*/ ;                           \
             sexpr    : '(' <expr>* ')' ;                         \
@@ -245,27 +251,12 @@ int main(int argc, char **argv) {
 	return 0;
 }
 
-/* Create a new number type lval */
-lval* lval_num(long x) {
-    lval* v = malloc(sizeof(lval));
-    v->type = LVAL_NUM;
-    v->num = x;
-    return v;
-}
-
-lval* lval_str(char* s) {
-    lval* v = malloc(sizeof(lval));
-    v->type = LVAL_STR;
-    v->str = strdup(s);
-    return v;
-}
-
 lval* lval_eq(lval* x, lval* y) {
     if (x->type != y->type) { return lval_bool(false); }
 
     switch (x->type) {
         case LVAL_BOOL:
-        case LVAL_NUM: 
+        case LVAL_LONG: 
             return lval_bool((x->num == y->num)); break;
         /* LVAL_STR, LVAL_ERR, LVAL_SYM all contain a string */
         case LVAL_STR:
@@ -290,15 +281,6 @@ lval* lval_eq(lval* x, lval* y) {
     return lval_bool(false);
 }
 
-lval* bool_negate(lval* l) {
-    if (l->num == false) {
-        l->num = true;
-    } else if (l->num == true) {
-        l->num = false;
-    }
-    return l;
-}
-
 lval* builtin_cmp(lenv* e, lval* a, char* op) {
     LASSERT_NUM(op, a, 2);
     lval* r;
@@ -308,12 +290,6 @@ lval* builtin_cmp(lenv* e, lval* a, char* op) {
     return r;
 }
 
-lval* lval_bool(bool truth) {
-    lval* v = malloc(sizeof(lval));
-    v->type = LVAL_BOOL;
-    v->num  = truth;
-    return v;
-}
 
 /* Create a new error type lval */
 lval* lval_err(char* fmt, ...) {
@@ -376,7 +352,7 @@ lval* lval_qexpr(void) {
 void lval_del(lval* v) {
     switch (v->type) {
         case LVAL_BOOL: break;
-        case LVAL_NUM: break;
+        case LVAL_LONG: break;
         case LVAL_FUN:
             if (!v->builtin) {
                    lenv_del(v->env);
@@ -413,6 +389,9 @@ lval* builtin_lt(lenv* e, lval* a)  { return builtin_op(e, a, "lt");}
 lval* builtin_gt(lenv* e, lval* a)  { return builtin_op(e, a, "gt");}
 lval* builtin_le(lenv* e, lval* a)  { return builtin_op(e, a, "le");}
 lval* builtin_ge(lenv* e, lval* a)  { return builtin_op(e, a, "ge");}
+
+// unary operators
+lval* builtin_negate(lenv* e, lval* a) { return bool_negate(a);}
 
 lval* builtin_load(lenv* e, lval* a) {
     LASSERT_NUM("load", a, 1);
@@ -542,7 +521,6 @@ lval* lval_call(lenv* e, lval* f, lval* a) {
     }
 }
 
-
 lval* lval_add(lval* v, lval* x) {
     v->count++;
     v->cell = realloc(v->cell, sizeof(lval*) * v->count);
@@ -550,29 +528,6 @@ lval* lval_add(lval* v, lval* x) {
     return v;
 }
 
-lval* lval_read_num(mpc_ast_t* t) {
-    long x = strtol(t->contents, NULL, 10);
-    return errno != ERANGE ? lval_num(x) : lval_err("invalid number");
-}
-
-lval* lval_read_bool(mpc_ast_t* t) {
-    if (strcmp("true", t->contents) == 0) {
-        return lval_bool(1);
-    } else if (strcmp("false", t->contents) == 0) {
-        return lval_bool(0);
-    } else {
-        return lval_err("Error converting boolean value %s.", t->contents);
-    }
-}
-
-lval* lval_read_str(mpc_ast_t* t) {
-    t->contents[strlen(t->contents)-1] = '\0';
-    char* unescaped = strdup(t->contents + 1);
-    unescaped = mpcf_unescape(unescaped);
-    lval* str = lval_str(unescaped);
-    free(unescaped);
-    return str;
-}
 lval* lval_read(mpc_ast_t* t) {
     
     /* if symbol or number, return conversion to that type */
@@ -666,11 +621,22 @@ lval* lval_take(lval* v, int i) {
 
 lval* builtin_op(lenv* e, lval* a, char* op) {
     /* Ensure all args are numbers */
+    bool hasfloat = false;
     for (int i = 0; i < a->count; i++) {
-        if (a->cell[i]->type != LVAL_NUM) {
+        if (a->cell[i]->type == LVAL_FLOAT) {
+            hasfloat = true;
+        }
+        if ((a->cell[i]->type != LVAL_LONG) && (a->cell[i]->type != LVAL_FLOAT)) {
             int type = a->cell[i]->type;
             lval_del(a);
             return lval_err("Incorrect type. Got %s, expected a number.", ltype_name(type));
+        }
+    }
+
+    /* if one of the numbers is a float, make them all floats */
+    if (hasfloat == true) {
+        for (int i = 0; i < a->count; i++) {
+            a->cell[i]->type = LVAL_FLOAT;
         }
     }
 
@@ -692,6 +658,7 @@ lval* builtin_op(lenv* e, lval* a, char* op) {
         if (strcmp(op, "-") == 0) { x->num -= y->num; }
         if (strcmp(op, "*") == 0) { x->num *= y->num; }
         if (strcmp(op, "/") == 0) {
+            x->type = LVAL_FLOAT;
             if (y->num == 0) {
                 lval_del(x); lval_del(y);
                 x = lval_err("Division by zero."); break;
@@ -699,6 +666,11 @@ lval* builtin_op(lenv* e, lval* a, char* op) {
                 x->num /= y->num;
             }
         }
+        
+        if (x->num == (long) x->num) {
+            x->type = LVAL_LONG;
+        }
+
         if (strcmp(op, "lt") == 0) {
             x->num = (x->num < y->num);
             x->type = LVAL_BOOL;
@@ -895,7 +867,7 @@ lval* lval_copy(lval* v) {
            }
            break;
         case LVAL_BOOL:
-        case LVAL_NUM: x->num = v->num; break;
+        case LVAL_LONG: x->num = v->num; break;
 
         /* copy strings using strdup */
         case LVAL_STR:
@@ -946,7 +918,8 @@ void lval_print(lval* v) {
             }
             break;
         case LVAL_STR:   lval_print_str(v); break;
-        case LVAL_NUM:   printf("%li", v->num); break;
+        case LVAL_LONG:  printf("%li", (long) v->num); break;
+        case LVAL_FLOAT: printf("%g", v->num); break;
         case LVAL_BOOL:  printf("%s", v->num ? "true" : "false"); break;
         case LVAL_ERR:   printf("Error: %s", v->str); break;
         case LVAL_SYM:   printf("%s", v->str); break;
@@ -1067,6 +1040,7 @@ void lenv_add_builtins(lenv* e) {
     lenv_add_builtin(e, "le", builtin_le);
     lenv_add_builtin(e, "ge", builtin_ge);
     lenv_add_builtin(e, "if", builtin_if);
+    lenv_add_builtin(e, "!", builtin_negate);
 
     // load and print
     lenv_add_builtin(e, "load", builtin_load);
@@ -1100,7 +1074,7 @@ char *ltype_name(int t) {
     switch(t) {
         case LVAL_FUN: return "Function";
         case LVAL_BOOL: return "Boolean";
-        case LVAL_NUM: return "Number";
+        case LVAL_LONG: return "Number";
         case LVAL_STR: return "String";
         case LVAL_ERR: return "Error";
         case LVAL_SYM: return "Symbol";
@@ -1123,4 +1097,80 @@ lval* lval_lambda(lval* formals, lval* body) {
     v->body = body;
     // should we free formals and body?
     return v;
+}
+
+/* string related */
+lval* lval_str(char* s) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_STR;
+    v->str = strdup(s);
+    return v;
+}
+
+lval* lval_read_str(mpc_ast_t* t) {
+    t->contents[strlen(t->contents)-1] = '\0';
+    char* unescaped = strdup(t->contents + 1);
+    unescaped = mpcf_unescape(unescaped);
+    lval* str = lval_str(unescaped);
+    free(unescaped);
+    return str;
+}
+
+/* number related */
+
+/* Create a new number type lval */
+lval* lval_long(long x) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_LONG;
+    v->num = (float) x;
+    return v;
+}
+
+lval* lval_read_num(mpc_ast_t* t) {
+    if (strstr(t->contents, ".")) {
+        float f = strtof(t->contents, NULL);
+        return errno != ERANGE ? lval_float(f) : lval_err("Invalid Float");
+    } else {
+        long x = strtol(t->contents, NULL, 10);
+        return errno != ERANGE ? lval_long(x) : lval_err("invalid number");    
+    }
+}
+
+lval* lval_float(float x) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_FLOAT;
+    v->num = x;
+    return v;
+}
+
+/* booleans */
+lval* lval_bool(bool truth) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_BOOL;
+    v->num  = truth;
+    return v;
+}
+
+lval* lval_read_bool(mpc_ast_t* t) {
+    if (strcmp("true", t->contents) == 0) {
+        return lval_bool(1);
+    } else if (strcmp("false", t->contents) == 0) {
+        return lval_bool(0);
+    } else {
+        return lval_err("Error converting boolean value %s.", t->contents);
+    }
+}
+
+lval* bool_negate(lval* l) {
+    LASSERT_NUM("!", l, 1);
+    LASSERT_TYPE("!", l, 0, LVAL_BOOL);
+    l->type = LVAL_BOOL;
+
+    if (l->num == false) {
+        l->num = true;
+    } else if (l->num == true) {
+        l->num = false;
+    }
+    lval_print(l);
+    return l;
 }
