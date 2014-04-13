@@ -8,14 +8,14 @@ Read it online: http://www.buildyourownlisp.com/
 * bool type, incompatible with number type
 * all string typed lvals share the same string space
 * strdup instead of malloc/strcpy
+* floating point type
 
 ## TODO
-* floating point type
-* fraction representation of numbers
 * user defined types
 * type casting
 * internal string representation that's not raw char array
 * use ptest https://github.com/orangeduck/ptest
+* fraction representation of numbers
 
 ## Crazy Ideas
 * threads
