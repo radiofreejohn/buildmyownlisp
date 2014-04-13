@@ -13,7 +13,9 @@ Read it online: http://www.buildyourownlisp.com/
 * floating point type
 * fraction representation of numbers
 * user defined types
+* type casting
 * internal string representation that's not raw char array
+* use ptest https://github.com/orangeduck/ptest
 
 ## Crazy Ideas
 * threads
