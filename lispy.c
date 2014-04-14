@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
+// #include <stdbool.h>
 #include "mpc.h"
 
 #include <editline/readline.h>
@@ -72,7 +72,7 @@ lval* lval_eval_sexpr(lenv*, lval*);
 lval* lval_eval(lenv*, lval*);
 lval* lval_long(long);
 lval* lval_str(char*);
-lval* lval_bool(bool);
+lval* lval_bool(int);
 lval* lval_err(char*, ...);
 lval* lval_sym(char*);
 lval* lval_sexpr(void);
@@ -81,7 +81,6 @@ lval* lval_take(lval*, int);
 lval* lval_eq(lval*, lval*);
 
 lval* builtin_op(lenv*, lval*, char*);
-lval* builtin_unary(lenv*, lval*, char*);
 lval* builtin_add(lenv*, lval*);
 lval* builtin_sub(lenv*, lval*);
 lval* builtin_mul(lenv*, lval*);
@@ -252,11 +251,12 @@ int main(int argc, char **argv) {
 }
 
 lval* lval_eq(lval* x, lval* y) {
-    if (x->type != y->type) { return lval_bool(false); }
+    if (x->type != y->type) { return lval_bool(0); }
 
     switch (x->type) {
         case LVAL_BOOL:
         case LVAL_LONG: 
+        case LVAL_FLOAT:
             return lval_bool((x->num == y->num)); break;
         /* LVAL_STR, LVAL_ERR, LVAL_SYM all contain a string */
         case LVAL_STR:
@@ -266,19 +266,19 @@ lval* lval_eq(lval* x, lval* y) {
            if (x->builtin) {
                return lval_bool((x->builtin == y->builtin));
            } else {
-               return lval_eq(lval_bool(lval_eq(x->formals, y->formals)),
-                              lval_bool(lval_eq(x->body, y->body)));
+               return lval_eq(lval_eq(x->formals, y->formals),
+                              lval_eq(x->body, y->body));
            }
         case LVAL_QEXPR:
         case LVAL_SEXPR:
-           if (x->count != y->count) { return lval_bool(false); }
+           if (x->count != y->count) { return lval_bool(0); }
            for (int i = 0; i < x->count; i++) {
-               if (lval_eq(x->cell[i], y->cell[i])->num == 0) { return lval_bool(false); }
+               if (lval_eq(x->cell[i], y->cell[i])->num == 0) { return lval_bool(0); }
            }
-           return lval_bool(true);
+           return lval_bool(1);
            break;
     }
-    return lval_bool(false);
+    return lval_bool(0);
 }
 
 lval* builtin_cmp(lenv* e, lval* a, char* op) {
@@ -621,10 +621,10 @@ lval* lval_take(lval* v, int i) {
 
 lval* builtin_op(lenv* e, lval* a, char* op) {
     /* Ensure all args are numbers */
-    bool hasfloat = false;
+    int hasfloat = 0;
     for (int i = 0; i < a->count; i++) {
         if (a->cell[i]->type == LVAL_FLOAT) {
-            hasfloat = true;
+            hasfloat = 1;
         }
         if ((a->cell[i]->type != LVAL_LONG) && (a->cell[i]->type != LVAL_FLOAT)) {
             int type = a->cell[i]->type;
@@ -634,7 +634,7 @@ lval* builtin_op(lenv* e, lval* a, char* op) {
     }
 
     /* if one of the numbers is a float, make them all floats */
-    if (hasfloat == true) {
+    if (hasfloat == 1) {
         for (int i = 0; i < a->count; i++) {
             a->cell[i]->type = LVAL_FLOAT;
         }
@@ -750,12 +750,12 @@ lval* builtin_if(lenv* e, lval* a) {
     }
 
     LASSERT(truth, (truth->type == LVAL_BOOL), "First argument must be conditional. Got %s", ltype_name(truth->type));
-    if (truth->num == 1) {
+    if ((int) truth->num == 1) {
         lval_del(falsecond);
         lval_del(truth);
         truecond->type = LVAL_SEXPR;
         return lval_eval(e, truecond);
-    } else if (truth->num == 0) {
+    } else if ((int) truth->num == 0) {
         lval_del(truecond);
         lval_del(truth);
         falsecond->type = LVAL_SEXPR;
@@ -920,7 +920,7 @@ void lval_print(lval* v) {
         case LVAL_STR:   lval_print_str(v); break;
         case LVAL_LONG:  printf("%li", (long) v->num); break;
         case LVAL_FLOAT: printf("%g", v->num); break;
-        case LVAL_BOOL:  printf("%s", v->num ? "true" : "false"); break;
+        case LVAL_BOOL:  printf("%s", (int) v->num ? "true" : "false"); break;
         case LVAL_ERR:   printf("Error: %s", v->str); break;
         case LVAL_SYM:   printf("%s", v->str); break;
         case LVAL_SEXPR: lval_expr_print(v, '(', ')'); break;
@@ -1040,7 +1040,7 @@ void lenv_add_builtins(lenv* e) {
     lenv_add_builtin(e, "le", builtin_le);
     lenv_add_builtin(e, "ge", builtin_ge);
     lenv_add_builtin(e, "if", builtin_if);
-    lenv_add_builtin(e, "!", builtin_negate);
+    lenv_add_builtin(e, "not", builtin_negate);
 
     // load and print
     lenv_add_builtin(e, "load", builtin_load);
@@ -1144,7 +1144,7 @@ lval* lval_float(float x) {
 }
 
 /* booleans */
-lval* lval_bool(bool truth) {
+lval* lval_bool(int truth) {
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_BOOL;
     v->num  = truth;
@@ -1162,15 +1162,15 @@ lval* lval_read_bool(mpc_ast_t* t) {
 }
 
 lval* bool_negate(lval* l) {
-    LASSERT_NUM("!", l, 1);
-    LASSERT_TYPE("!", l, 0, LVAL_BOOL);
-    l->type = LVAL_BOOL;
+    LASSERT_NUM("not", l, 1);
+    LASSERT_TYPE("not", l, 0, LVAL_BOOL);
+    lval* v = lval_pop(l, 0);
+    lval_del(l);
 
-    if (l->num == false) {
-        l->num = true;
-    } else if (l->num == true) {
-        l->num = false;
+    if ((int)v->num == 0) {
+        v->num = 1; 
+    } else if ((int)v->num == 1) {
+        v->num = 0;
     }
-    lval_print(l);
-    return l;
+    return v;
 }
