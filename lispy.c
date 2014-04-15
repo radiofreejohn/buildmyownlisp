@@ -98,7 +98,11 @@ lval* builtin_put(lenv*, lval*);
 //hacks
 lval* bool_negate_expr(lval*);
 lval* bool_negate_val(lval*);
+lval* builtin_if(lenv*, lval*);
 lval* builtin_not(lenv*, lval*);
+lval* builtin_and(lenv*, lval*);
+lval* builtin_or(lenv*, lval*);
+lval* builtin_or(lenv*, lval*);
 lval* builtin_eq(lenv*, lval*);
 lval* builtin_ne(lenv*, lval*);
 lval* builtin_lt(lenv*, lval*);
@@ -1043,6 +1047,8 @@ void lenv_add_builtins(lenv* e) {
     lenv_add_builtin(e, "ge", builtin_ge);
     lenv_add_builtin(e, "if", builtin_if);
     lenv_add_builtin(e, "not", builtin_not);
+    lenv_add_builtin(e, "and", builtin_and);
+    lenv_add_builtin(e, "or", builtin_or);
 
     // load and print
     lenv_add_builtin(e, "load", builtin_load);
@@ -1185,4 +1191,28 @@ lval* bool_negate_expr(lval* l) {
         v->num = 0;
     }
     return v;
+}
+
+lval* builtin_and(lenv* e, lval* l) {
+    for (int i = 0; i < l->count; i++) {
+        LASSERT_TYPE("and", l, i, LVAL_BOOL);
+        if (l->cell[i]->num == 0) {
+            lval_del(l);
+            return lval_bool(0);
+        }
+    }
+    lval_del(l);
+    return lval_bool(1);
+}
+
+lval* builtin_or(lenv* e, lval* l) {
+    for (int i = 0; i < l->count; i++) {
+        LASSERT_TYPE("or", l, i, LVAL_BOOL);
+        if (l->cell[i]->num == 1) {
+            lval_del(l);
+            return lval_bool(1);
+        }
+    }
+    lval_del(l);
+    return lval_bool(0);
 }
