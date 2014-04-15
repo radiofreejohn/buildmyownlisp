@@ -96,8 +96,9 @@ lval* builtin_var(lenv*, lval*, char*);
 lval* builtin_put(lenv*, lval*);
 
 //hacks
-lval* bool_negate(lval*);
-lval* builtin_negate(lenv*, lval*);
+lval* bool_negate_expr(lval*);
+lval* bool_negate_val(lval*);
+lval* builtin_not(lenv*, lval*);
 lval* builtin_eq(lenv*, lval*);
 lval* builtin_ne(lenv*, lval*);
 lval* builtin_lt(lenv*, lval*);
@@ -285,7 +286,7 @@ lval* builtin_cmp(lenv* e, lval* a, char* op) {
     LASSERT_NUM(op, a, 2);
     lval* r;
     if (strcmp(op, "eq") == 0) { r = lval_eq(a->cell[0], a->cell[1]); }
-    if (strcmp(op, "ne") == 0) { r = bool_negate(lval_eq(a->cell[0], a->cell[1])); }
+    if (strcmp(op, "ne") == 0) { r = bool_negate_val(lval_eq(a->cell[0], a->cell[1])); }
     lval_del(a);
     return r;
 }
@@ -379,6 +380,7 @@ void lval_del(lval* v) {
     free(v);
 }
 
+// ok, I think I get it, these will pass an expression (+ 3 3) -> lval (3 3)
 lval* builtin_add(lenv* e, lval* a) { return builtin_op(e, a, "+"); }
 lval* builtin_sub(lenv* e, lval* a) { return builtin_op(e, a, "-"); }
 lval* builtin_mul(lenv* e, lval* a) { return builtin_op(e, a, "*"); }
@@ -391,7 +393,7 @@ lval* builtin_le(lenv* e, lval* a)  { return builtin_op(e, a, "le");}
 lval* builtin_ge(lenv* e, lval* a)  { return builtin_op(e, a, "ge");}
 
 // unary operators
-lval* builtin_negate(lenv* e, lval* a) { return bool_negate(a);}
+lval* builtin_not(lenv* e, lval* a) { return bool_negate_expr(a);}
 
 lval* builtin_load(lenv* e, lval* a) {
     LASSERT_NUM("load", a, 1);
@@ -1040,7 +1042,7 @@ void lenv_add_builtins(lenv* e) {
     lenv_add_builtin(e, "le", builtin_le);
     lenv_add_builtin(e, "ge", builtin_ge);
     lenv_add_builtin(e, "if", builtin_if);
-    lenv_add_builtin(e, "not", builtin_negate);
+    lenv_add_builtin(e, "not", builtin_not);
 
     // load and print
     lenv_add_builtin(e, "load", builtin_load);
@@ -1161,7 +1163,17 @@ lval* lval_read_bool(mpc_ast_t* t) {
     }
 }
 
-lval* bool_negate(lval* l) {
+lval* bool_negate_val(lval* l) {
+    LASSERT(l, (l->type == LVAL_BOOL), "Function 'bool_negate_val' passed wrong type. Got %s, expected %s.", ltype_name(l->type), ltype_name(LVAL_BOOL));
+    if ((int)l->num == 0) {
+        l->num = 1; 
+    } else if ((int)l->num == 1) {
+        l->num = 0;
+    }
+    return l;
+}
+
+lval* bool_negate_expr(lval* l) {
     LASSERT_NUM("not", l, 1);
     LASSERT_TYPE("not", l, 0, LVAL_BOOL);
     lval* v = lval_pop(l, 0);
