@@ -79,6 +79,7 @@ lval* lval_sexpr(void);
 lval* lval_pop(lval*, int);
 lval* lval_take(lval*, int);
 lval* lval_eq(lval*, lval*);
+lval* lval_to_str(lval*);
 
 lval* builtin_op(lenv*, lval*, char*);
 lval* builtin_add(lenv*, lval*);
@@ -628,17 +629,35 @@ lval* lval_take(lval* v, int i) {
 lval* builtin_op(lenv* e, lval* a, char* op) {
     /* Ensure all args are numbers */
     int hasfloat = 0;
+    int hasstring = 0;
     for (int i = 0; i < a->count; i++) {
         if (a->cell[i]->type == LVAL_FLOAT) {
             hasfloat = 1;
         }
-        if ((a->cell[i]->type != LVAL_LONG) && (a->cell[i]->type != LVAL_FLOAT)) {
+        if (a->cell[i]->type == LVAL_STR) {
+            hasstring = 1;
+        }
+        if ((a->cell[i]->type != LVAL_LONG) && (a->cell[i]->type != LVAL_FLOAT) && !hasstring) {
             int type = a->cell[i]->type;
             lval_del(a);
-            return lval_err("Incorrect type. Got %s, expected a number.", ltype_name(type));
+            return lval_err("builtin_op: Incorrect type. Got %s, expected a number.", ltype_name(type));
         }
     }
 
+    /* Pop the first element */
+    lval* x = lval_pop(a, 0);
+
+    int length = 0;
+
+    // addition operator and string, should stringify and concatenate
+    if (hasstring && (strcmp(op, "+") == 0)) {
+        hasfloat = 0;
+        for (int i = 0; i < a->count; i++) {
+            a->cell[i] = lval_to_str(a->cell[i]);
+            length += strlen(a->cell[i]->str);
+        }
+        x->str = realloc(x->str, length+1);
+    }
     /* if one of the numbers is a float, make them all floats */
     if (hasfloat == 1) {
         for (int i = 0; i < a->count; i++) {
@@ -646,8 +665,6 @@ lval* builtin_op(lenv* e, lval* a, char* op) {
         }
     }
 
-    /* Pop the first element */
-    lval* x = lval_pop(a, 0);
 
     /* if no args and sub then perform unary negation */
     if ((strcmp(op, "-") == 0) && a->count == 0) { x->num = -x->num; }
@@ -658,6 +675,12 @@ lval* builtin_op(lenv* e, lval* a, char* op) {
 
         /* pop the next element */
         lval* y = lval_pop(a, 0);
+
+        if ((strcmp(op, "+") == 0) && hasstring) {
+            strncat(x->str, y->str, strlen(y->str));
+            lval_del(y);
+            continue;
+        }
 
         /* perform operation */
         if (strcmp(op, "+") == 0) { x->num += y->num; }
@@ -698,7 +721,6 @@ lval* builtin_op(lenv* e, lval* a, char* op) {
     }
 
     /* delete input expression and return result */
-    // doesn't this double delete a in cases of div by zero?
     lval_del(a);
     return x;
 }
@@ -931,6 +953,37 @@ void lval_print(lval* v) {
         case LVAL_SYM:   printf("%s", v->str); break;
         case LVAL_SEXPR: lval_expr_print(v, '(', ')'); break;
         case LVAL_QEXPR: lval_expr_print(v, '{', '}'); break;
+    }
+}
+
+// convert an lval to a string
+lval* lval_to_str(lval* v) {
+    char buffer[65];
+    switch (v->type) {
+        case LVAL_LONG:
+        case LVAL_FLOAT:
+            snprintf(buffer, 64, "%g", v->num);
+            lval_del(v);
+            return lval_str(buffer);
+        case LVAL_BOOL:
+            {
+            int num = (int) v->num;
+            lval_del(v);
+            return lval_str((num ? "true" : "false"));
+            } break;
+        case LVAL_STR:
+            return v;
+        case LVAL_ERR:
+        case LVAL_SYM:
+        case LVAL_SEXPR:
+        case LVAL_QEXPR:
+        case LVAL_FUN:
+        default:
+            {
+            int ltype = v->type;
+            lval_del(v);
+            return lval_err("Error: Cannot convert a %s to a string.", ltype_name(ltype));
+            } break;
     }
 }
 
