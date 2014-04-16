@@ -183,16 +183,16 @@ int main(int argc, char **argv) {
 	Lispy   = mpc_new("lispy");
 
 	/* Define them with the following Language */
-	mpca_lang(MPC_LANG_DEFAULT,
+	mpca_lang(MPCA_LANG_DEFAULT,
 		  "                                                      \
-            number   : /-?([0-9]*\\.)?([0-9]+)/ ;                \
+            number   : /-?([0-9]+\\.[0-9]+|\\w.[0-9]+|[0-9]+)/ ;                \
             bool     : /true|false/ ;                            \
-            string   : /\"(\\\\.|[^\"])*\"/ ;                    \
+            string   : /\"(\\\\.|[^\"])*\"/ ;                  \
             symbol   : /[a-zA-Z0-9_+\\-*\\/\\\\=<>!&]+/ ;        \
             comment  : /;[^\\r\\n]*/ ;                           \
             sexpr    : '(' <expr>* ')' ;                         \
             qexpr    : '{' <expr>* '}' ;                         \
-            expr     : <number> | <bool> | <comment> | <string> | <symbol> | <sexpr> | <qexpr> ; \
+            expr     : <number> | <bool> | <comment> | <string> | <symbol> | <sexpr> | <qexpr>; \
             lispy    : /^/ <expr>* /$/ ;                         \
           ",
 		  Number, Bool, String, Symbol, Comment, Sexpr, Qexpr, Expr, Lispy);
