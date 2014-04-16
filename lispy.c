@@ -357,6 +357,7 @@ lval* lval_qexpr(void) {
 /* delete lval pointer */
 void lval_del(lval* v) {
     switch (v->type) {
+        case LVAL_FLOAT: break;
         case LVAL_BOOL: break;
         case LVAL_LONG: break;
         case LVAL_FUN:
@@ -894,6 +895,7 @@ lval* lval_copy(lval* v) {
                x->body = lval_copy(v->body);
            }
            break;
+        case LVAL_FLOAT:
         case LVAL_BOOL:
         case LVAL_LONG: x->num = v->num; break;
 
@@ -1135,7 +1137,8 @@ char *ltype_name(int t) {
     switch(t) {
         case LVAL_FUN: return "Function";
         case LVAL_BOOL: return "Boolean";
-        case LVAL_LONG: return "Number";
+        case LVAL_LONG: return "Integer";
+        case LVAL_FLOAT: return "Float";
         case LVAL_STR: return "String";
         case LVAL_ERR: return "Error";
         case LVAL_SYM: return "Symbol";
