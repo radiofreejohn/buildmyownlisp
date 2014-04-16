@@ -185,7 +185,7 @@ int main(int argc, char **argv) {
 	/* Define them with the following Language */
 	mpca_lang(MPCA_LANG_DEFAULT,
 		  "                                                      \
-            number   : /-?([0-9]+\\.[0-9]+|\\w.[0-9]+|[0-9]+)/ ;                \
+            number   : /-?[0-9]+(\\.[0-9]+)?/ ;                \
             bool     : /true|false/ ;                            \
             string   : /\"(\\\\.|[^\"])*\"/ ;                  \
             symbol   : /[a-zA-Z0-9_+\\-*\\/\\\\=<>!&]+/ ;        \
@@ -219,7 +219,8 @@ int main(int argc, char **argv) {
             mpc_result_t r;
 
             if (mpc_parse("<lispy>", input, Lispy, &r)) {
-                lval* x = lval_eval(e, lval_read(r.output));
+                lval* z = lval_read(r.output);
+                lval* x = lval_eval(e, z);
                 if (!(x->type == LVAL_SEXPR && x->count == 0)) {
                     lval_println(x);
                 }
@@ -558,7 +559,8 @@ lval* lval_read(mpc_ast_t* t) {
         if (strcmp(t->children[i]->contents, "{") == 0) { continue; }
         if (strcmp(t->children[i]->tag,  "regex") == 0) { continue; }
         if (strstr(t->children[i]->tag, "comment")) { continue; }
-        x = lval_add(x, lval_read(t->children[i]));
+        lval* z = lval_read(t->children[i]);
+        x = lval_add(x, z);
     }
     return x;
 }
@@ -660,7 +662,9 @@ lval* builtin_op(lenv* e, lval* a, char* op) {
         x->str = realloc(x->str, length+1);
     }
     /* if one of the numbers is a float, make them all floats */
+
     if (hasfloat == 1) {
+        x->type = LVAL_FLOAT;
         for (int i = 0; i < a->count; i++) {
             a->cell[i]->type = LVAL_FLOAT;
         }
