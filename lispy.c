@@ -58,7 +58,6 @@ struct lenv {
 };
 // forward delcare parser names
 mpc_parser_t*   Number;
-mpc_parser_t*   Float;
 mpc_parser_t*   Bool;
 mpc_parser_t*   String;
 mpc_parser_t*   Symbol;
@@ -541,6 +540,7 @@ lval* lval_read(mpc_ast_t* t) {
     
     /* if symbol or number, return conversion to that type */
     if (strstr(t->tag, "number")) { return lval_read_num(t); }
+    if (strstr(t->tag, "float")) { return lval_read_num(t); }
     if (strstr(t->tag, "symbol")) { return lval_sym(t->contents); }
     if (strstr(t->tag, "bool"))   { return lval_read_bool(t); }
     if (strstr(t->tag, "string")) { return lval_read_str(t); }
@@ -632,15 +632,11 @@ lval* lval_take(lval* v, int i) {
 lval* builtin_op(lenv* e, lval* a, char* op) {
     /* Ensure all args are numbers */
     int hasfloat = 0;
-    int hasstring = 0;
     for (int i = 0; i < a->count; i++) {
         if (a->cell[i]->type == LVAL_FLOAT) {
             hasfloat = 1;
         }
-        if (a->cell[i]->type == LVAL_STR) {
-            hasstring = 1;
-        }
-        if ((a->cell[i]->type != LVAL_LONG) && (a->cell[i]->type != LVAL_FLOAT) && !hasstring) {
+        if ((a->cell[i]->type != LVAL_LONG) && (a->cell[i]->type != LVAL_FLOAT)) {
             int type = a->cell[i]->type;
             lval_del(a);
             return lval_err("builtin_op: Incorrect type. Got %s, expected a number.", ltype_name(type));
@@ -649,27 +645,10 @@ lval* builtin_op(lenv* e, lval* a, char* op) {
 
     /* Pop the first element */
     lval* x = lval_pop(a, 0);
-
-    int length = 0;
-
-    // addition operator and string, should stringify and concatenate
-    if (hasstring && (strcmp(op, "+") == 0)) {
-        hasfloat = 0;
-        for (int i = 0; i < a->count; i++) {
-            a->cell[i] = lval_to_str(a->cell[i]);
-            length += strlen(a->cell[i]->str);
-        }
-        x->str = realloc(x->str, length+1);
-    }
-    /* if one of the numbers is a float, make them all floats */
-
     if (hasfloat == 1) {
+        // x is the result in the end, it's the only one that needs to be a float
         x->type = LVAL_FLOAT;
-        for (int i = 0; i < a->count; i++) {
-            a->cell[i]->type = LVAL_FLOAT;
-        }
     }
-
 
     /* if no args and sub then perform unary negation */
     if ((strcmp(op, "-") == 0) && a->count == 0) { x->num = -x->num; }
@@ -680,12 +659,6 @@ lval* builtin_op(lenv* e, lval* a, char* op) {
 
         /* pop the next element */
         lval* y = lval_pop(a, 0);
-
-        if ((strcmp(op, "+") == 0) && hasstring) {
-            strncat(x->str, y->str, strlen(y->str));
-            lval_del(y);
-            continue;
-        }
 
         /* perform operation */
         if (strcmp(op, "+") == 0) { x->num += y->num; }
@@ -701,9 +674,11 @@ lval* builtin_op(lenv* e, lval* a, char* op) {
             }
         }
         
+        /* this isn't really necessary
         if (x->num == (long) x->num) {
             x->type = LVAL_LONG;
         }
+        */ 
 
         if (strcmp(op, "lt") == 0) {
             x->num = (x->num < y->num);
