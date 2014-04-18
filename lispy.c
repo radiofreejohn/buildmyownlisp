@@ -110,6 +110,10 @@ lval* builtin_gt(lenv*, lval*);
 lval* builtin_ge(lenv*, lval*);
 lval* builtin_le(lenv*, lval*);
 
+//string ops
+lval* builtin_str_op(lenv*, lval*, char*);
+lval* builtin_str(lenv*, lval*);
+
 // file loading
 lval* builtin_load(lenv* e, lval* a);
 
@@ -391,12 +395,15 @@ lval* builtin_add(lenv* e, lval* a) { return builtin_op(e, a, "+"); }
 lval* builtin_sub(lenv* e, lval* a) { return builtin_op(e, a, "-"); }
 lval* builtin_mul(lenv* e, lval* a) { return builtin_op(e, a, "*"); }
 lval* builtin_div(lenv* e, lval* a) { return builtin_op(e, a, "/"); }
-lval* builtin_eq(lenv* e, lval* a)  { return builtin_cmp(e, a, "eq");}
-lval* builtin_ne(lenv* e, lval* a)  { return builtin_cmp(e, a, "ne");}
-lval* builtin_lt(lenv* e, lval* a)  { return builtin_op(e, a, "lt");}
-lval* builtin_gt(lenv* e, lval* a)  { return builtin_op(e, a, "gt");}
-lval* builtin_le(lenv* e, lval* a)  { return builtin_op(e, a, "le");}
-lval* builtin_ge(lenv* e, lval* a)  { return builtin_op(e, a, "ge");}
+lval* builtin_eq(lenv* e, lval* a)  { return builtin_cmp(e, a, "eq"); }
+lval* builtin_ne(lenv* e, lval* a)  { return builtin_cmp(e, a, "ne"); }
+lval* builtin_lt(lenv* e, lval* a)  { return builtin_op(e, a, "lt"); }
+lval* builtin_gt(lenv* e, lval* a)  { return builtin_op(e, a, "gt"); }
+lval* builtin_le(lenv* e, lval* a)  { return builtin_op(e, a, "le"); }
+lval* builtin_ge(lenv* e, lval* a)  { return builtin_op(e, a, "ge"); }
+
+// string operations
+lval* builtin_str(lenv* e, lval* a) { return builtin_str_op(e, a, "str"); }
 
 // unary operators
 lval* builtin_not(lenv* e, lval* a) { return bool_negate_expr(a);}
@@ -626,6 +633,37 @@ lval* lval_pop(lval* v, int index) {
 lval* lval_take(lval* v, int i) {
     lval* x = lval_pop(v, i);
     lval_del(v);
+    return x;
+}
+
+lval* builtin_str_op(lenv* e, lval* a, char* op) {
+
+    // convert all arguments to strings
+    // this is wrong - but for now I'll keep it
+    // may not always want to convert arguments, 
+    // for example when slicing a single string
+    // making an assumption that these operate
+    // on an arbitrary number of variable
+    // arguments that all must be strings
+    for (int i = 0; i < a->count; i++) {
+        if (a->cell[i]->type != LVAL_STR) {
+            a->cell[i] = lval_to_str(a->cell[i]);
+        }
+    }
+    lval* x = lval_pop(a, 0);
+
+    while (a->count > 0 && x->type != LVAL_ERR) {
+        lval* y = lval_pop(a, 0);
+        
+        // perform operation
+        if (strcmp(op, "str") == 0) {
+            x->str = realloc(x->str, strlen(x->str) + strlen(y->str) + 1);
+            strncat(x->str, y->str, strlen(y->str));
+        }
+        lval_del(y);
+    }
+    lval_del(a);
+
     return x;
 }
 
@@ -938,6 +976,8 @@ void lval_print(lval* v) {
 }
 
 // convert an lval to a string
+// QUESTION: should I be deleting the original value here or
+// leave that to the caller?
 lval* lval_to_str(lval* v) {
     char buffer[65];
     switch (v->type) {
@@ -1083,6 +1123,9 @@ void lenv_add_builtins(lenv* e) {
     lenv_add_builtin(e, "not", builtin_not);
     lenv_add_builtin(e, "and", builtin_and);
     lenv_add_builtin(e, "or", builtin_or);
+
+    // strings
+    lenv_add_builtin(e, "str", builtin_str);
 
     // load and print
     lenv_add_builtin(e, "load", builtin_load);
