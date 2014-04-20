@@ -113,6 +113,7 @@ lval* builtin_le(lenv*, lval*);
 //string ops
 lval* builtin_str_op(lenv*, lval*, char*);
 lval* builtin_str(lenv*, lval*);
+lval* builtin_strlen(lenv*, lval*);
 
 // file loading
 lval* builtin_load(lenv* e, lval* a);
@@ -449,10 +450,15 @@ lval* builtin_load(lenv* e, lval* a) {
 
 lval* builtin_print(lenv* e, lval* a) {
     for (int i = 0; i < a->count; i++) {
-        lval_print(a->cell[i]); putchar(' ');
+        if (a->cell[i]->type == LVAL_STR) {
+            printf("%s", a->cell[i]->str);
+        } else {
+            lval_print(a->cell[i]); 
+            if (i != a->count-1) { putchar(' '); }
+        }
     }
 
-    putchar('\n');
+    // putchar('\n');
     lval_del(a);
     return lval_sexpr();
 }
@@ -741,6 +747,18 @@ lval* builtin_op(lenv* e, lval* a, char* op) {
     /* delete input expression and return result */
     lval_del(a);
     return x;
+}
+
+// it would be nice to be able to represent strings as lists to avoid
+// a bunch of string specific operations
+lval* builtin_strlen(lenv* e, lval* a) {
+    LASSERT(a, (a->count == 1),                "Function 'strlen' passed too many arguments. Got %d, expected %d.", a->count, 1);
+    LASSERT(a, (a->cell[0]->type == LVAL_STR), "Function 'strlen' passed incorrect type. Got %s, expected %s", ltype_name(a->cell[0]->type), ltype_name(LVAL_STR));
+    lval* s = lval_pop(a, 0);
+    int len = strlen(s->str);
+    lval_del(s);
+    lval_del(a);
+    return lval_long(len);
 }
 
 lval* builtin_head(lenv* e, lval* a) {
@@ -1126,6 +1144,7 @@ void lenv_add_builtins(lenv* e) {
 
     // strings
     lenv_add_builtin(e, "str", builtin_str);
+    lenv_add_builtin(e, "strlen", builtin_strlen);
 
     // load and print
     lenv_add_builtin(e, "load", builtin_load);
