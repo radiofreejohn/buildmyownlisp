@@ -791,6 +791,21 @@ lval* builtin_tail(lenv* e, lval* a) {
 
 lval* builtin_list(lenv* e, lval* a) {
     a->type = LVAL_QEXPR;
+
+    if (a->count == 1 && a->cell[0]->type == LVAL_STR) {
+        lval* z = lval_qexpr();
+        for (int i = 0; i < strlen(a->cell[0]->str); i++) {
+            char* c = malloc(2);
+            c[0] = a->cell[0]->str[i];
+            c[1] = '\0';
+            lval* ss = lval_sym(c);
+            z = lval_add(z, ss);
+            free(c);
+        }
+        lval_del(a);
+        return z;
+    }
+
     return a;
 }
 
