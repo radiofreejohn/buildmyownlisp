@@ -1,4 +1,4 @@
-lispy: lispy.c
-	gcc -Wall -o lispy lispy.c mpc.c -lreadline -lm
-debug: lispy.c
-	gcc -Wall -g -o lispy lispy.c mpc.c -lreadline -lm
+lispy: lispy.c mpc.c list.c
+	gcc -Wall -o lispy lispy.c mpc.c list.c -lreadline -lm
+debug: lispy.c mpc.c list.c
+	gcc -Wall -g -o lispy lispy.c mpc.c list.c -lreadline -lm
