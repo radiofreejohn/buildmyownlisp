@@ -9,8 +9,10 @@ Read it online: http://www.buildyourownlisp.com/
 * all string typed lvals share the same string space
 * strdup instead of malloc/strcpy
 * floating point type
+* change "cell" array to linked list
 
 ## TODO
+* remove for loops using list index
 * user defined types
 * type casting
 * internal string representation that's not raw char array
@@ -20,5 +22,4 @@ Read it online: http://www.buildyourownlisp.com/
 ## Crazy Ideas
 * threads
 * multi-line REPL
-* change arrays to linked list
 * a builtin eval called debug that's very verbose
