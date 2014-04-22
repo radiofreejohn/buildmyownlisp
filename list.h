@@ -12,6 +12,8 @@ typedef struct list_node {
 typedef struct list_t {
     list_node* head;
     int count;
+    int end;
+    list_node* curr;
 } list_t;
 
 list_t*      list_init(void);
@@ -22,4 +24,8 @@ void         list_remove(list_t* head, int index);
 void         list_destroy(list_t* head);
 void         list_replace(list_t* head, int index, struct lval* val);
 
+// iteration
+struct lval* list_start(list_t* head);
+int          list_end(list_t* head);
+struct lval* list_iter(list_t* head);
 #endif

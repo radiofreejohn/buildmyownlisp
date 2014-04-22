@@ -1,8 +1,6 @@
 #include <stdlib.h>
 #include "list.h"
-
-// forward declare this
-struct lval* lval_err(char*, ...);
+#include "lispy.h"
 
 list_t* list_init(void) {
     list_t* l = malloc(sizeof(list_t));
@@ -116,4 +114,29 @@ void list_replace(list_t* head, int index, struct lval* v) {
         index--;
     }
     l->val = v;
+}
+
+// iteration
+struct lval* list_start(list_t* head) {
+    head->end = 1;
+    if (head->head == NULL || head->head->val->type == LVAL_ERR) {
+        head->end = 0;
+        return NULL;
+    }
+    head->curr = head->head;
+    return head->curr->val;
+}
+
+int list_end(list_t* head) {
+    return head->end;
+}
+
+struct lval* list_iter(list_t* head) {
+    if (head->curr->next == NULL) {
+        head->end = 0;
+        // shouldn't actually be used.
+        return NULL;
+    }
+    head->curr = head->curr->next;
+    return head->curr->val;
 }
