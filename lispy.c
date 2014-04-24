@@ -33,10 +33,10 @@ void count_inc(int ltype) {
     }
 }
 void count_dec(int ltype) {
+    counter--;
     if (debug == 1) {
         printf("%s type: decrement counter to %d\n", ltype_name(ltype), counter);
     }
-    counter--;
 }
 
 int main(int argc, char **argv) {
