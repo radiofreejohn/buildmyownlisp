@@ -85,6 +85,8 @@ int main(int argc, char **argv) {
 
             /* Add input to history */
             add_history(input);
+
+            // temporary hacks
             if (strcmp(input, "refs") == 0) {
                 printf("refs: %d\n", counter);
                 continue;
@@ -92,6 +94,13 @@ int main(int argc, char **argv) {
             if (strcmp(input, "debug") == 0) {
                 printf("debugging refs\n");
                 debug = (debug + 1) % 2;
+                continue;
+            }
+            if (strcmp(input, "builtins") == 0) {
+                printf("%d builtins:\n", e->count);
+                for (int i = 0; i < e->count; i++) {
+                    printf("%s ", e->syms[i]);
+                } printf("\n");
                 continue;
             }
 
