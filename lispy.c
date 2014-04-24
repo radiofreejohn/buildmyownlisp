@@ -665,9 +665,57 @@ lval* builtin_list(lenv* e, lval* a) {
     if (a->count == 1 && list_index(a->cell, 0)->type == LVAL_STR) {
         lval* z = lval_qexpr();
         for (int i = 0; i < strlen(list_index(a->cell, 0)->str); i++) {
-            char* c = malloc(2);
+            int end = 1;
+            char* c = malloc(3);
             c[0] = list_index(a->cell, 0)->str[i];
-            c[1] = '\0';
+            switch (c[0]) {
+                case '\a':
+                    c[0] = '\\';
+                    c[1] = 'a';
+                    end++;
+                    break;
+                case '\b':
+                    c[0] = '\\';
+                    c[1] = 'b';
+                    end++;
+                    break;
+                case '\f':
+                    c[0] = '\\';
+                    c[1] = 'f';
+                    end++;
+                    break;
+                case '\n':
+                    c[0] = '\\';
+                    c[1] = 'n';
+                    end++;
+                    break;
+                case '\r':
+                    c[0] = '\\';
+                    c[1] = 'r';
+                    end++;
+                    break;
+                case '\t':
+                    c[0] = '\\';
+                    c[1] = 't';
+                    end++;
+                    break;
+                case '\v':
+                    c[0] = '\\';
+                    c[1] = 'v';
+                    end++;
+                    break;
+                case '\'':
+                    c[0] = '\\';
+                    c[1] = '\'';
+                    end++;
+                    break;
+                case '\\':
+                    c[0] = '\\';
+                    c[1] = '\\';
+                    end++;
+                    break;
+            }
+            c[end] = '\0';
             lval* ss = lval_sym(c);
             z = lval_add(z, ss);
             free(c);
