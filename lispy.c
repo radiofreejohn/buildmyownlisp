@@ -25,9 +25,23 @@
             "Function '%s' passed {} for argument %d.", func, index)
 
 int counter;
+int debug;
+void count_inc(int ltype) {
+    counter++;
+    if (debug == 1) {
+        printf("%s type: increment counter to %d\n", ltype_name(ltype), counter);
+    }
+}
+void count_dec(int ltype) {
+    if (debug == 1) {
+        printf("%s type: decrement counter to %d\n", ltype_name(ltype), counter);
+    }
+    counter--;
+}
 
 int main(int argc, char **argv) {
     counter = 0;
+    debug = 0;
 	/* Create Some Parsers */
 	Number  = mpc_new("number");
     Bool    = mpc_new("bool");
@@ -73,6 +87,11 @@ int main(int argc, char **argv) {
             add_history(input);
             if (strcmp(input, "refs") == 0) {
                 printf("refs: %d\n", counter);
+                continue;
+            }
+            if (strcmp(input, "debug") == 0) {
+                printf("debugging refs\n");
+                debug = (debug + 1) % 2;
                 continue;
             }
 
@@ -164,9 +183,9 @@ lval* builtin_cmp(lenv* e, lval* a, char* op) {
 
 /* Create a new error type lval */
 lval* lval_err(char* fmt, ...) {
-    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_ERR;
+    count_inc(v->type);
 
     /* create a va list and initialize it */
     va_list va;
@@ -188,44 +207,45 @@ lval* lval_err(char* fmt, ...) {
 }
 
 lval* lval_builtin(lbuiltin func) {
-    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_FUN;
     v->builtin = func;
+    count_inc(v->type);
     return v;
 }
 
 /* construct a pointer to a new symbol lval */
 lval* lval_sym(char* s) {
-    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_SYM;
     v->str = strdup(s);
+    count_inc(v->type);
     return v;
 }
 
 /* pointer to a new empty sexpr lval */
 lval* lval_sexpr(void) {
-    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_SEXPR;
     v->count = 0;
     v->cell = list_init();// NULL;
+    count_inc(v->type);
     return v;
 }
 
 /* pointer to a new empty qexpr lval */
 lval* lval_qexpr(void) {
-    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_QEXPR;
     v->count = 0;
     v->cell = list_init(); //NULL;
+    count_inc(v->type);
     return v;
 }
 
 /* delete lval pointer */
 void lval_del(lval* v) {
+    count_dec(v->type);
     switch (v->type) {
         case LVAL_FLOAT: break;
         case LVAL_BOOL: break;
@@ -256,7 +276,6 @@ void lval_del(lval* v) {
             list_destroy(v->cell);
             break;
     }
-    counter--;
     free(v);
 }
 
@@ -430,8 +449,8 @@ lval* lval_read(mpc_ast_t* t) {
 
     /* if root (>) or sexpr then create an empty list */ 
     lval* x = NULL;
-    if (strcmp(t->tag, ">") == 0) { x = lval_sexpr(); }
-    if (strstr(t->tag, "sexpr"))  { x = lval_sexpr(); }
+    if (strcmp(t->tag, ">") == 0) { printf("tag >\n");x = lval_sexpr(); }
+    if (strstr(t->tag, "sexpr"))  { printf("sexpr\n");x = lval_sexpr(); }
     if (strstr(t->tag, "qexpr"))  { x = lval_qexpr(); }
 
     /* Fill this list with any valid expression contained within */
@@ -861,9 +880,9 @@ lval* lval_join(lval* x, lval* y) {
 }
 
 lval* lval_copy(lval* v) {
-    counter++;
     lval* x = malloc(sizeof(lval));
     x->type = v->type;
+    count_inc(v->type);
     switch (v->type) {
         /* copy functions and numbers directly */
         case LVAL_FUN: 
@@ -1008,6 +1027,8 @@ lval* lenv_get(lenv* e, lval* k) {
          * if it does, return a copy of the value 
          */
         if (strcmp(e->syms[i], k->str) == 0) {
+            // TODO check this
+            lval_del(k);
             return lval_copy(e->vals[i]);
         }
     }
@@ -1016,7 +1037,9 @@ lval* lenv_get(lenv* e, lval* k) {
         return lenv_get(e->par, k);
     } else {
         /* if no symbol found, return error */
-        return lval_err("Unbound symbol '%s'", k->str);
+        char* errorstr = strdup(k->str);
+        lval_del(k);
+        return lval_err("Unbound symbol '%s'", errorstr);
     }
 }
 
@@ -1133,9 +1156,9 @@ char *ltype_name(int t) {
 }
 
 lval* lval_lambda(lval* formals, lval* body) {
-    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_FUN;
+    count_inc(v->type);
 
     v->builtin = NULL;
 
@@ -1150,10 +1173,10 @@ lval* lval_lambda(lval* formals, lval* body) {
 
 /* string related */
 lval* lval_str(char* s) {
-    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_STR;
     v->str = strdup(s);
+    count_inc(v->type);
     return v;
 }
 
@@ -1170,10 +1193,10 @@ lval* lval_read_str(mpc_ast_t* t) {
 
 /* Create a new number type lval */
 lval* lval_long(long x) {
-    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_LONG;
     v->num = (float) x;
+    count_inc(v->type);
     return v;
 }
 
@@ -1188,19 +1211,19 @@ lval* lval_read_num(mpc_ast_t* t) {
 }
 
 lval* lval_float(float x) {
-    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_FLOAT;
     v->num = x;
+    count_inc(v->type);
     return v;
 }
 
 /* booleans */
 lval* lval_bool(int truth) {
-    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_BOOL;
     v->num  = truth;
+    count_inc(v->type);
     return v;
 }
 
