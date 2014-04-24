@@ -518,7 +518,11 @@ lval* lval_eval_sexpr(lenv* e, lval* v) {
 }
 
 lval* lval_eval(lenv* e, lval* v) {
-    if (v->type == LVAL_SYM)   { return lenv_get(e, v); }
+    if (v->type == LVAL_SYM)   { 
+        lval* x = lenv_get(e, v);
+        lval_del(v);
+        return x;
+    }
     /* Evaluate S-expressions */
     if (v->type == LVAL_SEXPR) { return lval_eval_sexpr(e, v); }
     /* all other lval types remain the same */
@@ -1029,15 +1033,11 @@ void lenv_del(lenv* e) {
 }
 
 lval* lenv_get(lenv* e, lval* k) {
-
-    /* Iterate over all items in environment */
     for (int i = 0; i < e->count; i++) {
         /* check if the stored string matches the symbol string
          * if it does, return a copy of the value 
          */
         if (strcmp(e->syms[i], k->str) == 0) {
-            // TODO check this
-            lval_del(k);
             return lval_copy(e->vals[i]);
         }
     }
@@ -1046,9 +1046,7 @@ lval* lenv_get(lenv* e, lval* k) {
         return lenv_get(e->par, k);
     } else {
         /* if no symbol found, return error */
-        char* errorstr = strdup(k->str);
-        lval_del(k);
-        return lval_err("Unbound symbol '%s'", errorstr);
+        return lval_err("Unbound symbol '%s'", k->str);
     }
 }
 
