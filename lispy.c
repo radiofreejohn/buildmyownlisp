@@ -24,9 +24,10 @@
     LASSERT(args, list_index(args->cell, index)->count != 0, \
             "Function '%s' passed {} for argument %d.", func, index)
 
-
+int counter;
 
 int main(int argc, char **argv) {
+    counter = 0;
 	/* Create Some Parsers */
 	Number  = mpc_new("number");
     Bool    = mpc_new("bool");
@@ -70,6 +71,10 @@ int main(int argc, char **argv) {
 
             /* Add input to history */
             add_history(input);
+            if (strcmp(input, "refs") == 0) {
+                printf("refs: %d\n", counter);
+                continue;
+            }
 
             /* Attempt to Parse the user Input */
             mpc_result_t r;
@@ -159,6 +164,7 @@ lval* builtin_cmp(lenv* e, lval* a, char* op) {
 
 /* Create a new error type lval */
 lval* lval_err(char* fmt, ...) {
+    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_ERR;
 
@@ -182,6 +188,7 @@ lval* lval_err(char* fmt, ...) {
 }
 
 lval* lval_builtin(lbuiltin func) {
+    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_FUN;
     v->builtin = func;
@@ -190,6 +197,7 @@ lval* lval_builtin(lbuiltin func) {
 
 /* construct a pointer to a new symbol lval */
 lval* lval_sym(char* s) {
+    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_SYM;
     v->str = strdup(s);
@@ -198,6 +206,7 @@ lval* lval_sym(char* s) {
 
 /* pointer to a new empty sexpr lval */
 lval* lval_sexpr(void) {
+    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_SEXPR;
     v->count = 0;
@@ -207,6 +216,7 @@ lval* lval_sexpr(void) {
 
 /* pointer to a new empty qexpr lval */
 lval* lval_qexpr(void) {
+    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_QEXPR;
     v->count = 0;
@@ -246,6 +256,7 @@ void lval_del(lval* v) {
             list_destroy(v->cell);
             break;
     }
+    counter--;
     free(v);
 }
 
@@ -850,6 +861,7 @@ lval* lval_join(lval* x, lval* y) {
 }
 
 lval* lval_copy(lval* v) {
+    counter++;
     lval* x = malloc(sizeof(lval));
     x->type = v->type;
     switch (v->type) {
@@ -879,10 +891,7 @@ lval* lval_copy(lval* v) {
           x->count = v->count;
           x->cell = list_init();//  malloc(sizeof(lval*) * x->count);
           for (int i = 0; i < x->count; i++) {
-              // doesn't this potentially double allocate when copying sub expressions?
-              // is this cleaned up later?
               list_push(x->cell, lval_copy(list_index(v->cell, i)));
-              // x->cell[i] = lval_copy(v->cell[i]);
           }
           break;
     }
@@ -937,12 +946,12 @@ lval* lval_to_str(lval* v) {
         case LVAL_LONG:
         case LVAL_FLOAT:
             snprintf(buffer, 64, "%g", v->num);
-            lval_del(v);
+          //  lval_del(v);
             return lval_str(buffer);
         case LVAL_BOOL:
             {
             int num = (int) v->num;
-            lval_del(v);
+          //  lval_del(v);
             return lval_str((num ? "true" : "false"));
             } break;
         case LVAL_STR:
@@ -1124,6 +1133,7 @@ char *ltype_name(int t) {
 }
 
 lval* lval_lambda(lval* formals, lval* body) {
+    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_FUN;
 
@@ -1140,6 +1150,7 @@ lval* lval_lambda(lval* formals, lval* body) {
 
 /* string related */
 lval* lval_str(char* s) {
+    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_STR;
     v->str = strdup(s);
@@ -1159,6 +1170,7 @@ lval* lval_read_str(mpc_ast_t* t) {
 
 /* Create a new number type lval */
 lval* lval_long(long x) {
+    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_LONG;
     v->num = (float) x;
@@ -1176,6 +1188,7 @@ lval* lval_read_num(mpc_ast_t* t) {
 }
 
 lval* lval_float(float x) {
+    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_FLOAT;
     v->num = x;
@@ -1184,6 +1197,7 @@ lval* lval_float(float x) {
 
 /* booleans */
 lval* lval_bool(int truth) {
+    counter++;
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_BOOL;
     v->num  = truth;
