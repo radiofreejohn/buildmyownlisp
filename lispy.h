@@ -138,15 +138,15 @@ lval* lval_lambda(lval*, lval*);
 
 /* Possible lval types */
 enum {
-    LVAL_ERR,
-    LVAL_LONG,
-    LVAL_FLOAT,
-    LVAL_BOOL,
-    LVAL_STR,
-    LVAL_SYM,
-    LVAL_FUN,
-    LVAL_SEXPR,
-    LVAL_QEXPR
+    LVAL_ERR,   // 0
+    LVAL_LONG,  // 1
+    LVAL_FLOAT, // 2
+    LVAL_BOOL,  // 3
+    LVAL_STR,   // 4
+    LVAL_SYM,   // 5
+    LVAL_FUN,   // 6
+    LVAL_SEXPR, // 7
+    LVAL_QEXPR  // 8
 };
 
 /* Possible error types */

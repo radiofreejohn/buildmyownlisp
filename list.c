@@ -10,20 +10,23 @@ list_t* list_init(void) {
 }
 
 void list_push(list_t* head, struct lval* val) {
+    // newly initialized list with no head node
     if (head->head == NULL) {
         head->head = malloc(sizeof(list_node));
         head->head->val = val;
         head->head->next = NULL;
         head->head->prev = NULL;
-        head->count = head->count + 1;
+        head->count = 1;
         return;
     }
     list_node* l = head->head;
     list_node* p = NULL;
-    while (l != NULL) {
-        p = l;
+
+    while (l->next != NULL) {
         l = l->next;
     }
+    p = l;
+
     l = malloc(sizeof(list_node));
     l->prev = p;
     p->next = l;
@@ -35,9 +38,12 @@ void list_push(list_t* head, struct lval* val) {
 struct lval* list_pop(list_t* head) {
     list_node* l = head->head;
     if (l == NULL || head->count == 0) {
+        // not sure if I should be creating values here, may lead to
+        // unfreed errors
         return lval_err("Attempted to pop from empty list.");
     }
-    while ((l != NULL) && (l->next != NULL)) {
+    while (l->next != NULL) {
+    // while ((l != NULL) && (l->next != NULL)) {
         l = l->next;
     }
     struct lval* val = l->val;

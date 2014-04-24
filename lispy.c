@@ -448,7 +448,10 @@ lval* lval_eval_sexpr(lenv* e, lval* v) {
     }
 
     /* Error checking */
+    // v->count is bad here
     for (int i = 0; i < v->count; i++) {
+        // list index can return an lval err if it's out of bounds
+        // so this isn't great
         if (list_index(v->cell, i)->type == LVAL_ERR) {
             return lval_take(v, i);
         }
@@ -506,7 +509,6 @@ lval* lval_take(lval* v, int i) {
 }
 
 lval* builtin_str_op(lenv* e, lval* a, char* op) {
-
     // convert all arguments to strings
     // this is wrong - but for now I'll keep it
     // may not always want to convert arguments, 
@@ -516,8 +518,12 @@ lval* builtin_str_op(lenv* e, lval* a, char* op) {
     // arguments that all must be strings
     for (int i = 0; i < a->count; i++) {
         if (list_index(a->cell, i)->type != LVAL_STR) {
-            list_replace(a->cell, i, lval_to_str(list_index(a->cell, i)));
-            // a->cell[i] = lval_to_str(a->cell[i]);
+            lval* z = lval_to_str(list_index(a->cell, i));
+            if (z->type == LVAL_ERR) {
+                lval_del(a);
+                return z;
+            }
+            list_replace(a->cell, i, z);
         }
     }
     lval* x = lval_pop(a, 0);
@@ -892,18 +898,17 @@ lval* lval_to_str(lval* v) {
             return lval_str((num ? "true" : "false"));
             } break;
         case LVAL_STR:
-            return v;
         case LVAL_ERR:
         case LVAL_SYM:
+            return v;
         case LVAL_SEXPR:
         case LVAL_QEXPR:
         case LVAL_FUN:
         default:
-            {
-            int ltype = v->type;
-            lval_del(v);
-            return lval_err("Error: Cannot convert a %s to a string.", ltype_name(ltype));
-            } break;
+            // something is wrong here, I don't quite understand
+            // why lval_del chokes here but not above
+            return lval_err("Cannot convert values of this type.");
+            break;
     }
 }
 
