@@ -12,7 +12,7 @@ Read it online: http://www.buildyourownlisp.com/
 * change "cell" array to linked list
 
 ## TODO
-* remove for loops using list index
+* remove for loops using list index (almost done)
 * user defined types
 * type casting
 * internal string representation that's not raw char array
