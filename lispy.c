@@ -1,5 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
+/* this is only included in *BSD/Mac OS X
+   I prefer it over hsearch because it allows multiple
+   hash tables */
+#include <strhash.h>
 // #include <stdbool.h>
 #include "mpc.h"
 #include "lispy.h"
@@ -98,9 +102,8 @@ int main(int argc, char **argv) {
             }
             if (strcmp(input, "builtins") == 0) {
                 printf("%d builtins:\n", e->count);
-                for (int i = 0; i < e->count; i++) {
-                    printf("%s ", e->syms[i]);
-                } printf("\n");
+                hash_traverse(e->syms, lenv_hash_print_keys, NULL);
+                printf("\n");
                 continue;
             }
 
@@ -458,8 +461,8 @@ lval* lval_read(mpc_ast_t* t) {
 
     /* if root (>) or sexpr then create an empty list */ 
     lval* x = NULL;
-    if (strcmp(t->tag, ">") == 0) { printf("tag >\n");x = lval_sexpr(); }
-    if (strstr(t->tag, "sexpr"))  { printf("sexpr\n");x = lval_sexpr(); }
+    if (strcmp(t->tag, ">") == 0) { x = lval_sexpr(); }
+    if (strstr(t->tag, "sexpr"))  { x = lval_sexpr(); }
     if (strstr(t->tag, "qexpr"))  { x = lval_qexpr(); }
 
     /* Fill this list with any valid expression contained within */
@@ -1017,32 +1020,22 @@ lenv* lenv_new(void) {
     lenv* e = malloc(sizeof(lenv));
     e->par = NULL;
     e->count = 0;
-    e->syms = NULL;
-    e->vals = NULL;
+    e->syms = hash_create(51);
     return e;
 }
 
 void lenv_del(lenv* e) {
-    for (int i = 0; i < e->count; i++) {
-        free(e->syms[i]);
-        lval_del(e->vals[i]);
-    }
+    hash_purge(e->syms, lenv_hash_purge);
     free(e->syms);
-    free(e->vals);
     free(e);
 }
 
 lval* lenv_get(lenv* e, lval* k) {
-    for (int i = 0; i < e->count; i++) {
-        /* check if the stored string matches the symbol string
-         * if it does, return a copy of the value 
-         */
-        if (strcmp(e->syms[i], k->str) == 0) {
-            return lval_copy(e->vals[i]);
-        }
-    }
-    // if no symbol found, check in the parent
-    if (e->par) {
+    lval* z = hash_search(e->syms, k->str, NULL, NULL);
+    if (z != NULL) {
+        return lval_copy(z);
+    } else if (e->par) {
+        // if no symbol found, check in the parent
         return lenv_get(e->par, k);
     } else {
         /* if no symbol found, return error */
@@ -1052,29 +1045,13 @@ lval* lenv_get(lenv* e, lval* k) {
 
 void lenv_put(lenv* e, lval* k, lval* v) {
     /* iterate over items in environment to see if variable already exists */
-    for (int i = 0; i < e->count; i++) {
-        /* if variable is found, delete item at that position and
-         * replace with variable supplied by user
-         */
-        if (strcmp(e->syms[i], k->str) == 0) {
-            lval_del(e->vals[i]);
-            e->vals[i] = lval_copy(v);
-            // sizeof(char) should always be 1 
-            e->syms[i] = realloc(e->syms[i], strlen(k->str)+1);
-            strcpy(e->syms[i], k->str);
-            return;
-        }
+    lval* z = hash_search(e->syms, k->str, lval_copy(v), lval_del);
+
+    // hash_search returns NULL if a key exists and value is replaced
+    if (z != NULL) {
+        e->count++;
     }
-
-    /* if no existing entry found then allocate space */
-    e->count++;
-    e->vals = realloc(e->vals, sizeof(lval*) * e->count);
-    e->syms = realloc(e->syms, sizeof(char*) * e->count);
-
-    /* copy contents of lval and symbol string into new loc */
-    e->vals[e->count-1] = lval_copy(v);
     // should v be deleted?
-    e->syms[e->count-1] = strdup(k->str);
 }
 
 void lenv_add_builtin(lenv* e, char* name, lbuiltin func) {
@@ -1129,14 +1106,10 @@ lenv* lenv_copy(lenv* e) {
     lenv* n = malloc(sizeof(lenv));
     n->par = e->par;
     n->count = e->count;
-    n->syms = malloc(sizeof(char*) * n->count);
-    n->vals = malloc(sizeof(lval*) * n->count);
+    // here, maybe could use e->count + some
+    n->syms = hash_create(51);
+    hash_traverse(e->syms, lenv_hash_copy_kv, n->syms);
 
-    for (int i = 0; i < e->count; i++) {
-        // could accomplish the same with strdup
-        n->syms[i] = strdup(e->syms[i]);
-        n->vals[i] = lval_copy(e->vals[i]);
-    }
     return n;
 }
 
@@ -1145,6 +1118,26 @@ void lenv_def(lenv* e, lval* k, lval* v) {
     while (e->par) { e = e->par; }
     /* put value in e */
     lenv_put(e, k, v);
+}
+
+// used to clear hash table
+void lenv_hash_purge(char* key, lval* v) {
+    free(key);
+    lval_del(v);
+}
+
+int lenv_hash_print_keys(char* key, lval* v, void* n) {
+    printf("%s ", key);
+    return 1;
+}
+
+int lenv_hash_copy_kv(char* key, lval* v, hash_table* h) {
+    // assuming that the source table won't have dupe keys
+    
+    // do I need to create a fresh key with strdup?
+    lval* z = lval_copy(v);
+    hash_search(h, key, z, NULL);
+    return 1;
 }
 
 char *ltype_name(int t) {

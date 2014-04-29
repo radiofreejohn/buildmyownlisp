@@ -1,7 +1,9 @@
 #ifndef LISPY_H
 #define LISPY_H
+#include <strhash.h>
 #include "mpc.h"
 #include "list.h"
+
 struct lenv;
 typedef struct lval lval;
 typedef struct lenv lenv;
@@ -26,8 +28,7 @@ struct lval {
 struct lenv {
     lenv* par;
     int count;
-    char** syms;
-    lval** vals;
+    hash_table* syms;
 };
 // forward delcare parser names
 mpc_parser_t*   Number;
@@ -129,6 +130,9 @@ void lenv_add_builtin(lenv*, char*, lbuiltin);
 void lenv_add_builtins(lenv*);
 lenv* lenv_copy(lenv* e);
 void lenv_def(lenv*, lval*, lval*);
+void lenv_hash_purge(char*, lval*);
+int  lenv_hash_print_keys(char*, lval*, void*);
+int  lenv_hash_copy_kv(char*, lval*, hash_table*);
 
 /* enum -> name */
 char* ltype_name(int t);
