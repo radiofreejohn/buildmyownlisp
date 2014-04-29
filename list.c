@@ -2,6 +2,8 @@
 #include "list.h"
 #include "lispy.h"
 
+struct lval;
+
 list_t* list_init(void) {
     list_t* l = malloc(sizeof(list_t));
     l->count = 0;
@@ -9,7 +11,7 @@ list_t* list_init(void) {
     return l;
 }
 
-void list_push(list_t* head, struct lval* val) {
+void list_push(list_t* head, void* val) {
     // newly initialized list with no head node
     if (head->head == NULL) {
         head->head = malloc(sizeof(list_node));
@@ -35,18 +37,18 @@ void list_push(list_t* head, struct lval* val) {
     head->count = head->count + 1;
 }
 
-struct lval* list_pop(list_t* head) {
+void* list_pop(list_t* head) {
     list_node* l = head->head;
     if (l == NULL || head->count == 0) {
         // not sure if I should be creating values here, may lead to
         // unfreed errors
-        return lval_err("Attempted to pop from empty list.");
+        return NULL; //lval_err("Attempted to pop from empty list.");
     }
     while (l->next != NULL) {
     // while ((l != NULL) && (l->next != NULL)) {
         l = l->next;
     }
-    struct lval* val = l->val;
+    void* val = l->val;
     
     if (l->prev != NULL) {
         l->prev->next = NULL;
@@ -63,9 +65,9 @@ struct lval* list_pop(list_t* head) {
     return val;
 }
 
-struct lval* list_index(list_t* head, int index) {
+void* list_index(list_t* head, int index) {
     if (index > head->count) {
-        return lval_err("Index out of bounds: %d", index);
+        return NULL; //lval_err("Index out of bounds: %d", index);
     }
     list_node* l = head->head;
     while (index > 0) {
@@ -113,7 +115,7 @@ void list_destroy(list_t* head) {
     head->count = 0;
 }
 
-void list_replace(list_t* head, int index, struct lval* v) {
+void list_replace(list_t* head, int index, void* v) {
     list_node* l = head->head;
     while (index > 0) {
         l = l->next;
@@ -123,9 +125,10 @@ void list_replace(list_t* head, int index, struct lval* v) {
 }
 
 // iteration
-struct lval* list_start(list_t* head) {
+void* list_start(list_t* head) {
     head->end = 1;
-    if (head->head == NULL || head->head->val->type == LVAL_ERR) {
+    // TODO: don't include this
+    if (head->head == NULL || ((struct lval*)head->head->val)->type == LVAL_ERR) {
         head->end = 0;
         return NULL;
     }
@@ -137,7 +140,7 @@ int list_end(list_t* head) {
     return head->end;
 }
 
-struct lval* list_iter(list_t* head) {
+void* list_iter(list_t* head) {
     if (head->curr->next == NULL) {
         head->end = 0;
         // shouldn't actually be used.
