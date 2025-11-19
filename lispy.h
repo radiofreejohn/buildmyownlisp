@@ -9,6 +9,21 @@ typedef struct lval lval;
 typedef struct lenv lenv;
 typedef lval*(*lbuiltin)(lenv*, lval*);
 
+/* Length-prefixed string structure */
+typedef struct lstr {
+    int len;      /* length of string (not including null terminator) */
+    int cap;      /* capacity of buffer */
+    char* data;   /* null-terminated string data */
+} lstr;
+
+/* String helper functions */
+lstr* lstr_new(const char* s);
+lstr* lstr_newn(const char* s, int len);
+void  lstr_free(lstr* s);
+lstr* lstr_copy(lstr* s);
+lstr* lstr_concat(lstr* a, lstr* b);
+int   lstr_cmp(lstr* a, lstr* b);
+
 struct lval {
     int type;
     float num;

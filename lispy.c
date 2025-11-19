@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 /* this is only included in *BSD/Mac OS X
    I prefer it over hsearch because it allows multiple
    hash tables */
@@ -10,6 +11,53 @@
 #include "list.h"
 
 #include <editline/readline.h>
+
+/* Length-prefixed string implementation */
+
+lstr* lstr_new(const char* s) {
+    if (s == NULL) return NULL;
+    int len = strlen(s);
+    return lstr_newn(s, len);
+}
+
+lstr* lstr_newn(const char* s, int len) {
+    lstr* str = malloc(sizeof(lstr));
+    str->len = len;
+    str->cap = len + 1;
+    str->data = malloc(str->cap);
+    memcpy(str->data, s, len);
+    str->data[len] = '\0';
+    return str;
+}
+
+void lstr_free(lstr* s) {
+    if (s) {
+        free(s->data);
+        free(s);
+    }
+}
+
+lstr* lstr_copy(lstr* s) {
+    if (s == NULL) return NULL;
+    return lstr_newn(s->data, s->len);
+}
+
+lstr* lstr_concat(lstr* a, lstr* b) {
+    int new_len = a->len + b->len;
+    lstr* result = malloc(sizeof(lstr));
+    result->len = new_len;
+    result->cap = new_len + 1;
+    result->data = malloc(result->cap);
+    memcpy(result->data, a->data, a->len);
+    memcpy(result->data + a->len, b->data, b->len);
+    result->data[new_len] = '\0';
+    return result;
+}
+
+int lstr_cmp(lstr* a, lstr* b) {
+    if (a->len != b->len) return a->len - b->len;
+    return memcmp(a->data, b->data, a->len);
+}
 
 #define LASSERT(args, cond, fmt, ...) \
    if (!(cond)) { lval* err = lval_err(fmt, ##__VA_ARGS__); lval_del(args); return err; }
