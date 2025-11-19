@@ -655,30 +655,21 @@ lval* builtin_help(lenv* e, lval* a) {
         /* Traverse all symbols and print help for builtins */
         hash_traverse(global->syms, print_builtin_help, NULL);
 
-        printf("\nUse (help {name}) for detailed help on a specific builtin.\n");
+        printf("\nUse (help name) for detailed help on a specific builtin.\n");
         lval_del(a);
         return lval_sexpr();
     } else if (a->count == 1) {
         /* One argument - show detailed help for that builtin */
         lval* arg = (lval*)list_index(a->cell, 0);
 
-        /* Accept a string, symbol, or Q-expr containing a symbol */
+        /* Accept a symbol (unevaluated) or string */
         char* name;
-        if (arg->type == LVAL_STR) {
+        if (arg->type == LVAL_SYM) {
             name = arg->str;
-        } else if (arg->type == LVAL_SYM) {
+        } else if (arg->type == LVAL_STR) {
             name = arg->str;
-        } else if (arg->type == LVAL_QEXPR && arg->count == 1) {
-            lval* inner = (lval*)list_index(arg->cell, 0);
-            if (inner->type == LVAL_SYM) {
-                name = inner->str;
-            } else {
-                lval* err = lval_err("Function 'help' requires a symbol or string. Got %s.\n  Usage: (help {print}) or (help \"print\")", ltype_name(inner->type));
-                lval_del(a);
-                return err;
-            }
         } else {
-            lval* err = lval_err("Function 'help' requires a symbol or string. Got %s.\n  Usage: (help {print}) or (help \"print\")", ltype_name(arg->type));
+            lval* err = lval_err("Function 'help' requires a symbol. Got %s.\n  Usage: (help print)", ltype_name(arg->type));
             lval_del(a);
             return err;
         }
@@ -953,6 +944,27 @@ lval* lval_read(mpc_ast_t* t) {
 }
 
 lval* lval_eval_sexpr(lenv* e, lval* v) {
+
+    /* Special form: help - don't evaluate arguments */
+    if (v->count >= 1) {
+        lval* first = (lval*)list_index(v->cell, 0);
+        if (first->type == LVAL_SYM && strcmp(first->str, "help") == 0) {
+            /* Pop off the 'help' symbol and look it up */
+            lval* sym = lval_pop(v, 0);
+            lval* f = lenv_get(e, sym);
+            lval_del(sym);
+
+            if (f->type == LVAL_ERR) {
+                lval_del(v);
+                return f;
+            }
+
+            /* Call help with unevaluated arguments */
+            lval* result = lval_call(e, f, v);
+            lval_del(f);
+            return result;
+        }
+    }
 
     /* Evaluate the children */
     list_start(v->cell);
@@ -1848,8 +1860,8 @@ void lenv_add_builtins(lenv* e) {
     // help
     lenv_add_builtin(e, "help", builtin_help,
         "Show help for builtins.\n"
-        "  Usage: (help) or (help 'name)\n"
-        "  Example: (help 'print)");
+        "  Usage: (help) or (help name)\n"
+        "  Example: (help print)");
 
     // user-defined types
     lenv_add_builtin(e, "deftype", builtin_deftype,
