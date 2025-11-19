@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
 /* this is only included in *BSD/Mac OS X
    I prefer it over hsearch because it allows multiple
    hash tables */
@@ -80,6 +82,83 @@ char* get_builtin_help(char* name) {
     return NULL;
 }
 
+/* Thread support structures */
+typedef struct {
+    pthread_t thread;
+    lenv* env;
+    lval* expr;
+    lval* result;
+    int completed;
+} lthread;
+
+static pthread_mutex_t thread_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Simple thread pool for tracking */
+#define MAX_THREADS 256
+static lthread* thread_pool[MAX_THREADS];
+static int thread_count = 0;
+
+/* Thread execution function */
+static void* thread_run(void* arg) {
+    lthread* t = (lthread*)arg;
+
+    /* Evaluate the expression in the thread's environment */
+    t->result = lval_eval(t->env, t->expr);
+
+    pthread_mutex_lock(&thread_mutex);
+    t->completed = 1;
+    pthread_mutex_unlock(&thread_mutex);
+
+    return NULL;
+}
+
+/* Length-prefixed string implementation */
+
+lstr* lstr_new(const char* s) {
+    if (s == NULL) return NULL;
+    int len = strlen(s);
+    return lstr_newn(s, len);
+}
+
+lstr* lstr_newn(const char* s, int len) {
+    lstr* str = malloc(sizeof(lstr));
+    str->len = len;
+    str->cap = len + 1;
+    str->data = malloc(str->cap);
+    memcpy(str->data, s, len);
+    str->data[len] = '\0';
+    return str;
+}
+
+void lstr_free(lstr* s) {
+    if (s) {
+        free(s->data);
+        free(s);
+    }
+}
+
+lstr* lstr_copy(lstr* s) {
+    if (s == NULL) return NULL;
+    return lstr_newn(s->data, s->len);
+}
+
+lstr* lstr_concat(lstr* a, lstr* b) {
+    int new_len = a->len + b->len;
+    lstr* result = malloc(sizeof(lstr));
+    result->len = new_len;
+    result->cap = new_len + 1;
+    result->data = malloc(result->cap);
+    memcpy(result->data, a->data, a->len);
+    memcpy(result->data + a->len, b->data, b->len);
+    result->data[new_len] = '\0';
+    return result;
+}
+
+int lstr_cmp(lstr* a, lstr* b) {
+    if (a->len != b->len) return a->len - b->len;
+    return memcmp(a->data, b->data, a->len);
+}
+
 #define LASSERT(args, cond, fmt, ...) \
    if (!(cond)) { lval* err = lval_err(fmt, ##__VA_ARGS__); lval_del(args); return err; }
 
@@ -97,6 +176,85 @@ char* get_builtin_help(char* name) {
     LASSERT(args, ((lval*)list_index(args->cell, index))->count != 0, \
             "Function '%s' passed {} for argument %d.", func, index)
 
+/* Spawn a new thread: (spawn {expr}) -> thread-id */
+lval* builtin_spawn(lenv* e, lval* a) {
+    LASSERT_NUM("spawn", a, 1);
+    LASSERT_TYPE("spawn", a, 0, LVAL_QEXPR);
+
+    pthread_mutex_lock(&thread_mutex);
+    if (thread_count >= MAX_THREADS) {
+        pthread_mutex_unlock(&thread_mutex);
+        lval_del(a);
+        return lval_err("Maximum number of threads (%d) exceeded", MAX_THREADS);
+    }
+
+    /* Create thread structure */
+    lthread* t = malloc(sizeof(lthread));
+    t->env = lenv_copy(e);
+    t->expr = lval_pop(a, 0);
+    t->expr->type = LVAL_SEXPR;  /* Convert Q-expr to S-expr for evaluation */
+    t->result = NULL;
+    t->completed = 0;
+
+    /* Store in pool and get ID */
+    int thread_id = thread_count;
+    thread_pool[thread_count++] = t;
+    pthread_mutex_unlock(&thread_mutex);
+
+    /* Create the thread */
+    if (pthread_create(&t->thread, NULL, thread_run, t) != 0) {
+        pthread_mutex_lock(&thread_mutex);
+        thread_count--;
+        pthread_mutex_unlock(&thread_mutex);
+        lenv_del(t->env);
+        lval_del(t->expr);
+        free(t);
+        lval_del(a);
+        return lval_err("Failed to create thread");
+    }
+
+    lval_del(a);
+    return lval_long(thread_id);
+}
+
+/* Wait for a thread to complete: (wait thread-id) -> result */
+lval* builtin_wait(lenv* e, lval* a) {
+    LASSERT_NUM("wait", a, 1);
+    LASSERT_TYPE("wait", a, 0, LVAL_LONG);
+
+    int thread_id = (int)((lval*)list_index(a->cell, 0))->num;
+    lval_del(a);
+
+    pthread_mutex_lock(&thread_mutex);
+    if (thread_id < 0 || thread_id >= thread_count) {
+        pthread_mutex_unlock(&thread_mutex);
+        return lval_err("Invalid thread ID: %d", thread_id);
+    }
+
+    lthread* t = thread_pool[thread_id];
+    if (t == NULL) {
+        pthread_mutex_unlock(&thread_mutex);
+        return lval_err("Thread %d already waited", thread_id);
+    }
+    pthread_mutex_unlock(&thread_mutex);
+
+    /* Wait for thread to complete */
+    pthread_join(t->thread, NULL);
+
+    /* Get the result */
+    lval* result = t->result;
+
+    /* Clean up */
+    lenv_del(t->env);
+    free(t);
+
+    pthread_mutex_lock(&thread_mutex);
+    thread_pool[thread_id] = NULL;
+    pthread_mutex_unlock(&thread_mutex);
+
+    return result;
+}
+
 int counter;
 int debug;
 void count_inc(int ltype) {
@@ -112,6 +270,33 @@ void count_dec(int ltype) {
     }
 }
 
+/* Check if input has balanced brackets. Returns 0 if balanced, >0 if more opens */
+static int bracket_balance(const char* input) {
+    int balance = 0;
+    int in_string = 0;
+
+    for (int i = 0; input[i] != '\0'; i++) {
+        char c = input[i];
+
+        /* Handle string literals - don't count brackets inside strings */
+        if (c == '"' && (i == 0 || input[i-1] != '\\')) {
+            in_string = !in_string;
+            continue;
+        }
+
+        if (!in_string) {
+            if (c == '(' || c == '{') {
+                balance++;
+            } else if (c == ')' || c == '}') {
+                balance--;
+            }
+        }
+    }
+
+    return balance;
+}
+
+#ifndef LISPY_TEST
 int main(int argc, char **argv) {
     counter = 0;
     debug = 0;
@@ -155,6 +340,33 @@ int main(int argc, char **argv) {
 
             /* Output our prompt and get input */
             char* input = readline("lispy> ");
+            if (!input) break;  /* Handle EOF */
+
+            /* Multi-line input: keep reading if brackets aren't balanced */
+            int balance = bracket_balance(input);
+            size_t input_len = strlen(input);
+            size_t input_cap = input_len + 1;
+
+            while (balance > 0) {
+                char* continuation = readline("...... ");
+                if (!continuation) break;
+
+                /* Resize input buffer and append continuation */
+                size_t cont_len = strlen(continuation);
+                size_t new_len = input_len + 1 + cont_len;  /* +1 for newline */
+
+                if (new_len + 1 > input_cap) {
+                    input_cap = new_len + 256;  /* Grow with some slack */
+                    input = realloc(input, input_cap);
+                }
+
+                input[input_len] = '\n';
+                memcpy(input + input_len + 1, continuation, cont_len + 1);
+                input_len = new_len;
+
+                free(continuation);
+                balance = bracket_balance(input);
+            }
 
             /* Add input to history */
             add_history(input);
@@ -162,17 +374,20 @@ int main(int argc, char **argv) {
             // temporary hacks
             if (strcmp(input, "refs") == 0) {
                 printf("refs: %d\n", counter);
+                free(input);
                 continue;
             }
             if (strcmp(input, "debug") == 0) {
                 printf("debugging refs\n");
                 debug = (debug + 1) % 2;
+                free(input);
                 continue;
             }
             if (strcmp(input, "builtins") == 0) {
                 printf("%d builtins:\n", e->count);
                 hash_traverse(e->syms, lenv_hash_print_keys, NULL);
                 printf("\n");
+                free(input);
                 continue;
             }
             if (strcmp(input, "help") == 0) {
@@ -224,6 +439,7 @@ int main(int argc, char **argv) {
 
 	return 0;
 }
+#endif /* LISPY_TEST */
 
 lval* lval_eq(lval* x, lval* y) {
     if (x->type != y->type) { return lval_bool(0); }
@@ -254,6 +470,14 @@ lval* lval_eq(lval* x, lval* y) {
                if (lval_eq(u, v)->num == 0) { return lval_bool(0); }
            }
            return lval_bool(1);
+           break;
+        case LVAL_UTYPE:
+        case LVAL_UVAL:
+           if (strcmp(x->type_name, y->type_name) != 0) { return lval_bool(0); }
+           return lval_eq(x->fields, y->fields);
+           break;
+        case LVAL_FRAC:
+           return lval_bool(x->numer == y->numer && x->denom == y->denom);
            break;
     }
     return lval_bool(0);
@@ -338,6 +562,7 @@ void lval_del(lval* v) {
         case LVAL_FLOAT: break;
         case LVAL_BOOL: break;
         case LVAL_LONG: break;
+        case LVAL_FRAC: break;
         case LVAL_FUN:
             if (!v->builtin) {
                    lenv_del(v->env);
@@ -362,6 +587,13 @@ void lval_del(lval* v) {
             /* also free the memory allocated to contain the pointers */
             // TODO: should instead just create some way to delete the list
             list_destroy(v->cell);
+            break;
+
+        /* user-defined types */
+        case LVAL_UTYPE:
+        case LVAL_UVAL:
+            free(v->type_name);
+            lval_del(v->fields);
             break;
     }
     free(v);
@@ -425,13 +657,18 @@ lval* builtin_load(lenv* e, lval* a) {
 }
 
 lval* builtin_print(lenv* e, lval* a) {
-    for (int i = 0; i < a->count; i++) {
-        if ((((lval*)list_index(a->cell, i)))->type == LVAL_STR) {
-            printf("%s", (((lval*)list_index(a->cell, i)))->str);
+    int first = 1;
+    list_start(a->cell);
+    while (list_end(a->cell)) {
+        lval* v = list_curr(a->cell);
+        if (v->type == LVAL_STR) {
+            printf("%s", v->str);
         } else {
-            lval_print((lval*)list_index(a->cell, i)); 
-            if (i != a->count-1) { putchar(' '); }
+            if (!first) { putchar(' '); }
+            lval_print(v);
         }
+        first = 0;
+        list_iter(a->cell);
     }
 
     // putchar('\n');
@@ -498,6 +735,136 @@ lval* builtin_help(lenv* e, lval* a) {
         lval_del(a);
         return err;
     }
+}
+
+/* Helper to print indentation */
+static void debug_indent(int depth) {
+    for (int i = 0; i < depth; i++) {
+        printf("  ");
+    }
+}
+
+/* Debug version of lval_eval_sexpr */
+static lval* lval_eval_sexpr_debug(lenv* e, lval* v, int depth) {
+    debug_indent(depth);
+    printf("EVAL S-EXPR: ");
+    lval_print(v);
+    printf("\n");
+
+    /* Evaluate the children */
+    int child_num = 0;
+    list_start(v->cell);
+    while (list_end(v->cell)) {
+        lval* l = list_curr(v->cell);
+        debug_indent(depth + 1);
+        printf("ARG %d: ", child_num);
+        lval_print(l);
+        printf("\n");
+        lval* evaluated = lval_eval_debug(e, l, depth + 1);
+        list_replace_curr(v->cell, evaluated);
+        debug_indent(depth + 1);
+        printf("ARG %d => ", child_num);
+        lval_print(evaluated);
+        printf("\n");
+        list_iter(v->cell);
+        child_num++;
+    }
+
+    /* Error checking */
+    int err_index = 0;
+    list_start(v->cell);
+    while (list_end(v->cell)) {
+        lval* l = list_curr(v->cell);
+        if (l->type == LVAL_ERR) {
+            return lval_take(v, err_index);
+        }
+        err_index++;
+        list_iter(v->cell);
+    }
+
+    /* Empty expression */
+    if (v->count == 0) {
+        debug_indent(depth);
+        printf("=> (empty)\n");
+        return v;
+    }
+
+    /* Single expression */
+    if (v->count == 1) {
+        lval* result = lval_take(v, 0);
+        debug_indent(depth);
+        printf("=> ");
+        lval_print(result);
+        printf("\n");
+        return result;
+    }
+
+    /* Ensure first element is function */
+    lval* f = lval_pop(v, 0);
+    if (f->type != LVAL_FUN) {
+        lval* err = lval_err("S-Expression starts with incorrect type. Got %s, expected %s.", ltype_name(f->type), ltype_name(LVAL_FUN));
+        lval_del(f); lval_del(v);
+        return err;
+    }
+
+    /* Call function */
+    debug_indent(depth);
+    printf("CALL: ");
+    lval_print(f);
+    printf(" with %d args\n", v->count);
+
+    lval* result = lval_call(e, f, v);
+    lval_del(f);
+
+    debug_indent(depth);
+    printf("=> ");
+    lval_print(result);
+    printf("\n");
+
+    return result;
+}
+
+/* Debug version of lval_eval - verbose output */
+lval* lval_eval_debug(lenv* e, lval* v, int depth) {
+    if (v->type == LVAL_SYM) {
+        debug_indent(depth);
+        printf("LOOKUP: %s\n", v->str);
+        lval* x = lenv_get(e, v);
+        debug_indent(depth);
+        printf("=> ");
+        lval_print(x);
+        printf("\n");
+        lval_del(v);
+        return x;
+    }
+    /* Evaluate S-expressions */
+    if (v->type == LVAL_SEXPR) {
+        return lval_eval_sexpr_debug(e, v, depth);
+    }
+    /* all other lval types remain the same */
+    debug_indent(depth);
+    printf("LITERAL: ");
+    lval_print(v);
+    printf("\n");
+    return v;
+}
+
+/* Debug builtin - verbose evaluation */
+lval* builtin_debug(lenv* e, lval* a) {
+    LASSERT_NUM("debug", a, 1);
+    LASSERT_TYPE("debug", a, 0, LVAL_QEXPR);
+
+    lval* x = lval_pop(a, 0);
+    lval_del(a);
+
+    /* Convert Q-expression to S-expression for evaluation */
+    x->type = LVAL_SEXPR;
+
+    printf("\n=== DEBUG EVAL ===\n");
+    lval* result = lval_eval_debug(e, x, 0);
+    printf("=== END DEBUG ===\n\n");
+
+    return result;
 }
 
 lval* lval_call(lenv* e, lval* f, lval* a) {
@@ -609,21 +976,23 @@ lval* lval_read(mpc_ast_t* t) {
 lval* lval_eval_sexpr(lenv* e, lval* v) {
 
     /* Evaluate the children */
-    for (int i = 0; i < v->count; i++) {
-        // TODO: is this OK?
-        lval* l = (lval*)list_index(v->cell, i);
-        list_replace(v->cell, i, lval_eval(e, l));
-        // v->cell[i] = lval_eval(e, v->cell[i]);
+    list_start(v->cell);
+    while (list_end(v->cell)) {
+        lval* l = list_curr(v->cell);
+        list_replace_curr(v->cell, lval_eval(e, l));
+        list_iter(v->cell);
     }
 
     /* Error checking */
-    // v->count is bad here
-    for (int i = 0; i < v->count; i++) {
-        // list index can return an lval err if it's out of bounds
-        // so this isn't great
-        if (((lval*)list_index(v->cell, i))->type == LVAL_ERR) {
-            return lval_take(v, i);
+    int err_index = 0;
+    list_start(v->cell);
+    while (list_end(v->cell)) {
+        lval* l = list_curr(v->cell);
+        if (l->type == LVAL_ERR) {
+            return lval_take(v, err_index);
         }
+        err_index++;
+        list_iter(v->cell);
     }
 
     /* Empty expression */
@@ -684,20 +1053,23 @@ lval* lval_take(lval* v, int i) {
 lval* builtin_str_op(lenv* e, lval* a, char* op) {
     // convert all arguments to strings
     // this is wrong - but for now I'll keep it
-    // may not always want to convert arguments, 
+    // may not always want to convert arguments,
     // for example when slicing a single string
     // making an assumption that these operate
     // on an arbitrary number of variable
     // arguments that all must be strings
-    for (int i = 0; i < a->count; i++) {
-        if (((lval*)list_index(a->cell, i))->type != LVAL_STR) {
-            lval* z = lval_to_str((lval*)list_index(a->cell, i));
+    list_start(a->cell);
+    while (list_end(a->cell)) {
+        lval* v = list_curr(a->cell);
+        if (v->type != LVAL_STR) {
+            lval* z = lval_to_str(v);
             if (z->type == LVAL_ERR) {
                 lval_del(a);
                 return z;
             }
-            list_replace(a->cell, i, z);
+            list_replace_curr(a->cell, z);
         }
+        list_iter(a->cell);
     }
     lval* x = lval_pop(a, 0);
 
@@ -719,15 +1091,18 @@ lval* builtin_str_op(lenv* e, lval* a, char* op) {
 lval* builtin_op(lenv* e, lval* a, char* op) {
     /* Ensure all args are numbers */
     int hasfloat = 0;
-    for (int i = 0; i < a->count; i++) {
-        if (((lval*)list_index(a->cell, i))->type == LVAL_FLOAT) {
+    list_start(a->cell);
+    while (list_end(a->cell)) {
+        lval* v = list_curr(a->cell);
+        if (v->type == LVAL_FLOAT) {
             hasfloat = 1;
         }
-        if ((((lval*)list_index(a->cell, i))->type != LVAL_LONG) && (((lval*)list_index(a->cell, i))->type != LVAL_FLOAT)) {
-            int type = ((lval*)list_index(a->cell, i))->type;
+        if (v->type != LVAL_LONG && v->type != LVAL_FLOAT) {
+            int type = v->type;
             lval_del(a);
             return lval_err("builtin_op: Incorrect type. Got %s, expected a number.", ltype_name(type));
         }
+        list_iter(a->cell);
     }
 
     /* Pop the first element */
@@ -804,6 +1179,118 @@ lval* builtin_strlen(lenv* e, lval* a) {
     return lval_long(len);
 }
 
+/* Type casting builtins */
+
+/* Convert to integer: (int 3.14) -> 3, (int "42") -> 42, (int true) -> 1 */
+lval* builtin_int(lenv* e, lval* a) {
+    LASSERT_NUM("int", a, 1);
+    lval* v = lval_pop(a, 0);
+    lval_del(a);
+
+    switch (v->type) {
+        case LVAL_LONG:
+            return v;
+        case LVAL_FLOAT: {
+            long result = (long)v->num;
+            lval_del(v);
+            return lval_long(result);
+        }
+        case LVAL_BOOL: {
+            long result = (int)v->num;
+            lval_del(v);
+            return lval_long(result);
+        }
+        case LVAL_STR: {
+            char* endptr;
+            long result = strtol(v->str, &endptr, 10);
+            if (*endptr != '\0') {
+                lval* err = lval_err("Cannot convert string '%s' to integer", v->str);
+                lval_del(v);
+                return err;
+            }
+            lval_del(v);
+            return lval_long(result);
+        }
+        default: {
+            lval* err = lval_err("Cannot convert %s to integer", ltype_name(v->type));
+            lval_del(v);
+            return err;
+        }
+    }
+}
+
+/* Convert to float: (float 3) -> 3.0, (float "3.14") -> 3.14 */
+lval* builtin_float_cast(lenv* e, lval* a) {
+    LASSERT_NUM("float", a, 1);
+    lval* v = lval_pop(a, 0);
+    lval_del(a);
+
+    switch (v->type) {
+        case LVAL_FLOAT:
+            return v;
+        case LVAL_LONG: {
+            float result = v->num;
+            lval_del(v);
+            return lval_float(result);
+        }
+        case LVAL_BOOL: {
+            float result = v->num;
+            lval_del(v);
+            return lval_float(result);
+        }
+        case LVAL_STR: {
+            char* endptr;
+            float result = strtof(v->str, &endptr);
+            if (*endptr != '\0') {
+                lval* err = lval_err("Cannot convert string '%s' to float", v->str);
+                lval_del(v);
+                return err;
+            }
+            lval_del(v);
+            return lval_float(result);
+        }
+        default: {
+            lval* err = lval_err("Cannot convert %s to float", ltype_name(v->type));
+            lval_del(v);
+            return err;
+        }
+    }
+}
+
+/* Convert to boolean: (bool 0) -> false, (bool 1) -> true, (bool "") -> false */
+lval* builtin_bool_cast(lenv* e, lval* a) {
+    LASSERT_NUM("bool", a, 1);
+    lval* v = lval_pop(a, 0);
+    lval_del(a);
+
+    switch (v->type) {
+        case LVAL_BOOL:
+            return v;
+        case LVAL_LONG:
+        case LVAL_FLOAT: {
+            int result = (v->num != 0);
+            lval_del(v);
+            return lval_bool(result);
+        }
+        case LVAL_STR: {
+            int result = (strlen(v->str) > 0);
+            lval_del(v);
+            return lval_bool(result);
+        }
+        case LVAL_QEXPR:
+        case LVAL_SEXPR: {
+            int result = (v->count > 0);
+            lval_del(v);
+            return lval_bool(result);
+        }
+        default: {
+            lval* err = lval_err("Cannot convert %s to boolean", ltype_name(v->type));
+            lval_del(v);
+            return err;
+        }
+    }
+}
+
 lval* builtin_head(lenv* e, lval* a) {
     /* check error conditions */
     LASSERT(a, (a->count == 1),                  "Function 'head' passed too many arguments. Got %d, expected %d.", a->count, 1);
@@ -835,12 +1322,15 @@ lval* builtin_tail(lenv* e, lval* a) {
 lval* builtin_list(lenv* e, lval* a) {
     a->type = LVAL_QEXPR;
 
-    if (a->count == 1 && ((lval*)list_index(a->cell, 0))->type == LVAL_STR) {
+    lval* first = list_start(a->cell);
+    if (a->count == 1 && first != NULL && first->type == LVAL_STR) {
         lval* z = lval_qexpr();
-        for (int i = 0; i < strlen(((lval*)list_index(a->cell, 0))->str); i++) {
+        char* str = first->str;
+        int len = strlen(str);
+        for (int i = 0; i < len; i++) {
             int end = 1;
             char* c = malloc(3);
-            c[0] = ((lval*)list_index(a->cell, 0))->str[i];
+            c[0] = str[i];
             switch (c[0]) {
                 case '\a':
                     c[0] = '\\';
@@ -902,8 +1392,15 @@ lval* builtin_list(lenv* e, lval* a) {
 
 lval* builtin_if(lenv* e, lval* a) {
     LASSERT(a, (a->count == 3), "Function 'if' passed incorrect number of arguments. Got %d, expected %d.", a->count, 3);
-    for (int i = 1; i < a->count; i++) {
-        LASSERT(a, (((lval*)list_index(a->cell, i))->type == LVAL_QEXPR), "Expected Q-expression as an argument, but got %s", ltype_name(((lval*)list_index(a->cell, i))->type));
+    int i = 0;
+    list_start(a->cell);
+    while (list_end(a->cell)) {
+        lval* v = list_curr(a->cell);
+        if (i >= 1) {
+            LASSERT(a, (v->type == LVAL_QEXPR), "Expected Q-expression as an argument, but got %s", ltype_name(v->type));
+        }
+        i++;
+        list_iter(a->cell);
     }
     // type check the arguments later... derp
     lval* condition = lval_pop(a, 0);
@@ -949,8 +1446,11 @@ lval* builtin_eval(lenv* e, lval* a) {
 }
 
 lval* builtin_join(lenv* e, lval* a) {
-    for (int i = 0; i < a->count; i++) {
-        LASSERT(a, (((lval*)list_index(a->cell, i))->type == LVAL_QEXPR), "Function 'join' passed incorrect type. Got %s, expected %s", ltype_name(((lval*)list_index(a->cell, i))->type), ltype_name(LVAL_QEXPR));
+    list_start(a->cell);
+    while (list_end(a->cell)) {
+        lval* v = list_curr(a->cell);
+        LASSERT(a, (v->type == LVAL_QEXPR), "Function 'join' passed incorrect type. Got %s, expected %s", ltype_name(v->type), ltype_name(LVAL_QEXPR));
+        list_iter(a->cell);
     }
 
     lval* x = lval_pop(a, 0);
@@ -970,11 +1470,14 @@ lval* builtin_lambda(lenv* e, lval* a) {
     LASSERT_TYPE("\\", a, 1, LVAL_QEXPR);
 
     // check first Q expression contains only symbols
-    for (int i = 0; i < (((lval*)list_index(a->cell, 0)))->count; i++) {
-        // whoa, this is not cool
-        LASSERT(a, (((lval*)list_index(((lval*)list_index(a->cell, 0))->cell, i))->type == LVAL_SYM),
+    lval* formals_check = (lval*)list_index(a->cell, 0);
+    list_start(formals_check->cell);
+    while (list_end(formals_check->cell)) {
+        lval* v = list_curr(formals_check->cell);
+        LASSERT(a, (v->type == LVAL_SYM),
                 "Cannot define non-symbol. Got %s, expected %s.",
-                ltype_name(((lval*)list_index(((lval*)list_index(a->cell, 0))->cell, i))->type), ltype_name(LVAL_SYM));
+                ltype_name(v->type), ltype_name(LVAL_SYM));
+        list_iter(formals_check->cell);
     }
 
     // pop first two arguments and pass them to lval lambda
@@ -988,20 +1491,30 @@ lval* builtin_lambda(lenv* e, lval* a) {
 lval* builtin_var(lenv* e, lval* a, char* func) {
     LASSERT_TYPE(func, a, 0, LVAL_QEXPR);
     lval* syms = (lval*)list_index(a->cell, 0);
-    for (int i = 0; i < syms->count; i++) {
-        LASSERT(a, (((lval*)list_index(syms->cell, i))->type == LVAL_SYM),
+    list_start(syms->cell);
+    while (list_end(syms->cell)) {
+        lval* v = list_curr(syms->cell);
+        LASSERT(a, (v->type == LVAL_SYM),
                 "Function '%s' cannot define non-symbol. Got %s, expected %s.",
-                func, ltype_name(((lval*)list_index(syms->cell, i))->type), ltype_name(LVAL_SYM));
+                func, ltype_name(v->type), ltype_name(LVAL_SYM));
+        list_iter(syms->cell);
     }
 
     LASSERT(a, (syms->count == a->count-1),
             "Function '%s' passed too many arguments for symbols. Got %d, expected %d.",
             func, syms->count, a->count-1);
 
-    for (int i = 0; i < syms->count; i++) {
+    /* Iterate over symbols and values together using index for values offset */
+    list_start(syms->cell);
+    int i = 0;
+    while (list_end(syms->cell)) {
+        lval* sym = list_curr(syms->cell);
+        lval* val = (lval*)list_index(a->cell, i + 1);
         /* if def define in global scope. if put define in local scope */
-        if (strcmp(func, "def") == 0) { lenv_def(e, (lval*)list_index(syms->cell, i), (lval*)list_index(a->cell, i+1)); }
-        if (strcmp(func, "="  ) == 0) { lenv_put(e, (lval*)list_index(syms->cell, i), (lval*)list_index(a->cell, i+1)); }
+        if (strcmp(func, "def") == 0) { lenv_def(e, sym, val); }
+        if (strcmp(func, "="  ) == 0) { lenv_put(e, sym, val); }
+        list_iter(syms->cell);
+        i++;
     }
     
     lval_del(a);
@@ -1041,6 +1554,10 @@ lval* lval_copy(lval* v) {
         case LVAL_FLOAT:
         case LVAL_BOOL:
         case LVAL_LONG: x->num = v->num; break;
+        case LVAL_FRAC:
+           x->numer = v->numer;
+           x->denom = v->denom;
+           break;
 
         /* copy strings using strdup */
         case LVAL_STR:
@@ -1051,10 +1568,20 @@ lval* lval_copy(lval* v) {
         case LVAL_SEXPR:
         case LVAL_QEXPR:
           x->count = v->count;
-          x->cell = list_init();//  malloc(sizeof(lval*) * x->count);
-          for (int i = 0; i < x->count; i++) {
-              list_push(x->cell, lval_copy((lval*)list_index(v->cell, i)));
+          x->cell = list_init();
+          list_start(v->cell);
+          while (list_end(v->cell)) {
+              lval* elem = list_curr(v->cell);
+              list_push(x->cell, lval_copy(elem));
+              list_iter(v->cell);
           }
+          break;
+
+        /* copy user-defined types */
+        case LVAL_UTYPE:
+        case LVAL_UVAL:
+          x->type_name = strdup(v->type_name);
+          x->fields = lval_copy(v->fields);
           break;
     }
 
@@ -1064,14 +1591,18 @@ lval* lval_copy(lval* v) {
 /* print sexpr */
 void lval_expr_print(lval* v, char open, char close) {
     putchar(open);
-    for (int i = 0; i < v->count; i++) {
-        /* print value contained within */
-        lval_print((lval*)list_index(v->cell, i));
-
-        /* don't print trailing space if last element */
-        if (i != (v->count-1)) {
+    int first = 1;
+    list_start(v->cell);
+    while (list_end(v->cell)) {
+        lval* elem = list_curr(v->cell);
+        /* print space before all but first element */
+        if (!first) {
             putchar(' ');
         }
+        /* print value contained within */
+        lval_print(elem);
+        first = 0;
+        list_iter(v->cell);
     }
     putchar(close);
 }
@@ -1091,11 +1622,22 @@ void lval_print(lval* v) {
         case LVAL_STR:   lval_print_str(v); break;
         case LVAL_LONG:  printf("%li", (long) v->num); break;
         case LVAL_FLOAT: printf("%g", v->num); break;
+        case LVAL_FRAC:  printf("%ld/%ld", v->numer, v->denom); break;
         case LVAL_BOOL:  printf("%s", (int) v->num ? "true" : "false"); break;
         case LVAL_ERR:   printf("Error: %s", v->str); break;
         case LVAL_SYM:   printf("%s", v->str); break;
         case LVAL_SEXPR: lval_expr_print(v, '(', ')'); break;
         case LVAL_QEXPR: lval_expr_print(v, '{', '}'); break;
+        case LVAL_UTYPE:
+            printf("<type %s ", v->type_name);
+            lval_print(v->fields);
+            printf(">");
+            break;
+        case LVAL_UVAL:
+            printf("<%s ", v->type_name);
+            lval_print(v->fields);
+            printf(">");
+            break;
     }
 }
 
@@ -1223,6 +1765,11 @@ void lenv_add_builtins(lenv* e) {
     lenv_add_builtin(e, "str", builtin_str);
     lenv_add_builtin(e, "strlen", builtin_strlen);
 
+    // type casting
+    lenv_add_builtin(e, "int", builtin_int);
+    lenv_add_builtin(e, "float", builtin_float_cast);
+    lenv_add_builtin(e, "bool", builtin_bool_cast);
+
     // load and print
     lenv_add_builtin(e, "load", builtin_load);
     lenv_add_builtin(e, "print", builtin_print);
@@ -1230,6 +1777,24 @@ void lenv_add_builtins(lenv* e) {
 
     // help
     lenv_add_builtin(e, "help", builtin_help);
+
+    // user-defined types
+    lenv_add_builtin(e, "deftype", builtin_deftype);
+    lenv_add_builtin(e, "new", builtin_new);
+    lenv_add_builtin(e, "get", builtin_get);
+    lenv_add_builtin(e, "set", builtin_set);
+
+    // fractions
+    lenv_add_builtin(e, "frac", builtin_frac);
+    lenv_add_builtin(e, "numer", builtin_numer);
+    lenv_add_builtin(e, "denom", builtin_denom);
+
+    // debugging
+    lenv_add_builtin(e, "debug", builtin_debug);
+
+    // threads
+    lenv_add_builtin(e, "spawn", builtin_spawn);
+    lenv_add_builtin(e, "wait", builtin_wait);
 }
 
 lenv* lenv_copy(lenv* e) {
@@ -1281,6 +1846,9 @@ char *ltype_name(int t) {
         case LVAL_SYM: return "Symbol";
         case LVAL_SEXPR: return "S-Expression";
         case LVAL_QEXPR: return "Q-Expression";
+        case LVAL_UTYPE: return "User-Type";
+        case LVAL_UVAL: return "User-Value";
+        case LVAL_FRAC: return "Fraction";
         default: return "Unknown";
     }
 }
@@ -1392,25 +1960,410 @@ lval* bool_negate_expr(lval* l) {
 }
 
 lval* builtin_and(lenv* e, lval* l) {
-    for (int i = 0; i < l->count; i++) {
-        LASSERT_TYPE("and", l, i, LVAL_BOOL);
-        if (((lval*)list_index(l->cell, i))->num == 0) {
+    int i = 0;
+    list_start(l->cell);
+    while (list_end(l->cell)) {
+        lval* v = list_curr(l->cell);
+        LASSERT(l, (v->type == LVAL_BOOL),
+                "Function '%s' passed incorrect type for argument %d. Got %s, expected %s.",
+                "and", i, ltype_name(v->type), ltype_name(LVAL_BOOL));
+        if (v->num == 0) {
             lval_del(l);
             return lval_bool(0);
         }
+        i++;
+        list_iter(l->cell);
     }
     lval_del(l);
     return lval_bool(1);
 }
 
 lval* builtin_or(lenv* e, lval* l) {
-    for (int i = 0; i < l->count; i++) {
-        LASSERT_TYPE("or", l, i, LVAL_BOOL);
-        if (((lval*)list_index(l->cell, i))->num == 1) {
+    int i = 0;
+    list_start(l->cell);
+    while (list_end(l->cell)) {
+        lval* v = list_curr(l->cell);
+        LASSERT(l, (v->type == LVAL_BOOL),
+                "Function '%s' passed incorrect type for argument %d. Got %s, expected %s.",
+                "or", i, ltype_name(v->type), ltype_name(LVAL_BOOL));
+        if (v->num == 1) {
             lval_del(l);
             return lval_bool(1);
         }
+        i++;
+        list_iter(l->cell);
     }
     lval_del(l);
     return lval_bool(0);
+}
+
+/* User-defined types */
+
+/* Create a new user type definition */
+lval* lval_utype(char* name, lval* fields) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_UTYPE;
+    v->type_name = strdup(name);
+    v->fields = fields;
+    count_inc(v->type);
+    return v;
+}
+
+/* Create a new user type instance */
+lval* lval_uval(char* type_name, lval* values) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_UVAL;
+    v->type_name = strdup(type_name);
+    v->fields = values;
+    count_inc(v->type);
+    return v;
+}
+
+/* Define a new user type: (deftype {Point} {x y}) */
+lval* builtin_deftype(lenv* e, lval* a) {
+    LASSERT_NUM("deftype", a, 2);
+    LASSERT_TYPE("deftype", a, 0, LVAL_QEXPR);
+    LASSERT_TYPE("deftype", a, 1, LVAL_QEXPR);
+
+    lval* name_qexpr = lval_pop(a, 0);
+    lval* field_names = lval_pop(a, 0);
+
+    /* Name should be a Q-expr with a single symbol */
+    if (name_qexpr->count != 1 || ((lval*)list_index(name_qexpr->cell, 0))->type != LVAL_SYM) {
+        lval_del(name_qexpr);
+        lval_del(field_names);
+        lval_del(a);
+        return lval_err("Type name must be a single symbol in a Q-expression");
+    }
+    lval* name = lval_pop(name_qexpr, 0);
+    lval_del(name_qexpr);
+
+    /* Verify all field names are symbols */
+    list_start(field_names->cell);
+    while (list_end(field_names->cell)) {
+        lval* field = list_curr(field_names->cell);
+        if (field->type != LVAL_SYM) {
+            lval_del(name);
+            lval_del(field_names);
+            lval_del(a);
+            return lval_err("Field names must be symbols");
+        }
+        list_iter(field_names->cell);
+    }
+
+    /* Create the type and bind it */
+    lval* utype = lval_utype(name->str, field_names);
+    lenv_def(e, name, utype);
+
+    lval_del(name);
+    lval_del(utype);
+    lval_del(a);
+    return lval_sexpr();
+}
+
+/* Create instance: (new {Point} 10 20) */
+lval* builtin_new(lenv* e, lval* a) {
+    LASSERT(a, a->count >= 1, "Function 'new' requires at least 1 argument");
+    LASSERT_TYPE("new", a, 0, LVAL_QEXPR);
+
+    /* Get the type name from Q-expr */
+    lval* name_qexpr = lval_pop(a, 0);
+    if (name_qexpr->count != 1 || ((lval*)list_index(name_qexpr->cell, 0))->type != LVAL_SYM) {
+        lval_del(name_qexpr);
+        lval_del(a);
+        return lval_err("Type name must be a single symbol in a Q-expression");
+    }
+    lval* type_sym = lval_pop(name_qexpr, 0);
+    lval_del(name_qexpr);
+
+    lval* utype = lenv_get(e, type_sym);
+
+    if (utype->type == LVAL_ERR) {
+        lval_del(type_sym);
+        lval_del(a);
+        return utype;
+    }
+
+    if (utype->type != LVAL_UTYPE) {
+        lval* err = lval_err("'%s' is not a user-defined type", type_sym->str);
+        lval_del(type_sym);
+        lval_del(utype);
+        lval_del(a);
+        return err;
+    }
+
+    /* Check argument count matches field count */
+    int field_count = utype->fields->count;
+    if (a->count != field_count) {
+        lval* err = lval_err("Type '%s' expects %d fields, got %d",
+                            type_sym->str, field_count, a->count);
+        lval_del(type_sym);
+        lval_del(utype);
+        lval_del(a);
+        return err;
+    }
+
+    /* Create the instance with values */
+    lval* values = lval_qexpr();
+    while (a->count > 0) {
+        lval_add(values, lval_pop(a, 0));
+    }
+
+    lval* instance = lval_uval(type_sym->str, values);
+
+    lval_del(type_sym);
+    lval_del(utype);
+    lval_del(a);
+    return instance;
+}
+
+/* Get field value: (get instance {field_name}) */
+lval* builtin_get(lenv* e, lval* a) {
+    LASSERT_NUM("get", a, 2);
+    LASSERT_TYPE("get", a, 0, LVAL_UVAL);
+    LASSERT_TYPE("get", a, 1, LVAL_QEXPR);
+
+    lval* instance = lval_pop(a, 0);
+    lval* field_qexpr = lval_pop(a, 0);
+
+    if (field_qexpr->count != 1 || ((lval*)list_index(field_qexpr->cell, 0))->type != LVAL_SYM) {
+        lval_del(instance);
+        lval_del(field_qexpr);
+        lval_del(a);
+        return lval_err("Field name must be a single symbol in a Q-expression");
+    }
+    lval* field_name = lval_pop(field_qexpr, 0);
+    lval_del(field_qexpr);
+
+    /* Look up the type to get field names */
+    lval* type_sym = lval_sym(instance->type_name);
+    lval* utype = lenv_get(e, type_sym);
+    lval_del(type_sym);
+
+    if (utype->type != LVAL_UTYPE) {
+        lval_del(instance);
+        lval_del(field_name);
+        lval_del(utype);
+        lval_del(a);
+        return lval_err("Type '%s' not found", instance->type_name);
+    }
+
+    /* Find field index */
+    int index = -1;
+    int i = 0;
+    list_start(utype->fields->cell);
+    while (list_end(utype->fields->cell)) {
+        lval* field = list_curr(utype->fields->cell);
+        if (strcmp(field->str, field_name->str) == 0) {
+            index = i;
+            break;
+        }
+        i++;
+        list_iter(utype->fields->cell);
+    }
+
+    if (index == -1) {
+        lval* err = lval_err("Field '%s' not found in type '%s'",
+                           field_name->str, instance->type_name);
+        lval_del(instance);
+        lval_del(field_name);
+        lval_del(utype);
+        lval_del(a);
+        return err;
+    }
+
+    /* Get the value at that index */
+    lval* result = lval_copy((lval*)list_index(instance->fields->cell, index));
+
+    lval_del(instance);
+    lval_del(field_name);
+    lval_del(utype);
+    lval_del(a);
+    return result;
+}
+
+/* Set field value: (set instance {field_name} value) - returns new instance */
+lval* builtin_set(lenv* e, lval* a) {
+    LASSERT_NUM("set", a, 3);
+    LASSERT_TYPE("set", a, 0, LVAL_UVAL);
+    LASSERT_TYPE("set", a, 1, LVAL_QEXPR);
+
+    lval* instance = lval_pop(a, 0);
+    lval* field_qexpr = lval_pop(a, 0);
+    lval* new_value = lval_pop(a, 0);
+
+    if (field_qexpr->count != 1 || ((lval*)list_index(field_qexpr->cell, 0))->type != LVAL_SYM) {
+        lval_del(instance);
+        lval_del(field_qexpr);
+        lval_del(new_value);
+        lval_del(a);
+        return lval_err("Field name must be a single symbol in a Q-expression");
+    }
+    lval* field_name = lval_pop(field_qexpr, 0);
+    lval_del(field_qexpr);
+
+    /* Look up the type to get field names */
+    lval* type_sym = lval_sym(instance->type_name);
+    lval* utype = lenv_get(e, type_sym);
+    lval_del(type_sym);
+
+    if (utype->type != LVAL_UTYPE) {
+        lval_del(instance);
+        lval_del(field_name);
+        lval_del(new_value);
+        lval_del(utype);
+        lval_del(a);
+        return lval_err("Type '%s' not found", instance->type_name);
+    }
+
+    /* Find field index */
+    int index = -1;
+    int i = 0;
+    list_start(utype->fields->cell);
+    while (list_end(utype->fields->cell)) {
+        lval* field = list_curr(utype->fields->cell);
+        if (strcmp(field->str, field_name->str) == 0) {
+            index = i;
+            break;
+        }
+        i++;
+        list_iter(utype->fields->cell);
+    }
+
+    if (index == -1) {
+        lval* err = lval_err("Field '%s' not found in type '%s'",
+                           field_name->str, instance->type_name);
+        lval_del(instance);
+        lval_del(field_name);
+        lval_del(new_value);
+        lval_del(utype);
+        lval_del(a);
+        return err;
+    }
+
+    /* Create a new instance with the updated value */
+    lval* new_values = lval_qexpr();
+    i = 0;
+    list_start(instance->fields->cell);
+    while (list_end(instance->fields->cell)) {
+        lval* v = list_curr(instance->fields->cell);
+        if (i == index) {
+            lval_add(new_values, lval_copy(new_value));
+        } else {
+            lval_add(new_values, lval_copy(v));
+        }
+        i++;
+        list_iter(instance->fields->cell);
+    }
+
+    lval* result = lval_uval(instance->type_name, new_values);
+
+    lval_del(instance);
+    lval_del(field_name);
+    lval_del(new_value);
+    lval_del(utype);
+    lval_del(a);
+    return result;
+}
+
+/* Fraction implementation */
+
+/* Greatest common divisor using Euclidean algorithm */
+long gcd(long a, long b) {
+    if (a < 0) a = -a;
+    if (b < 0) b = -b;
+    while (b != 0) {
+        long t = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
+/* Create a new fraction, automatically simplified */
+lval* lval_frac(long numer, long denom) {
+    if (denom == 0) {
+        return lval_err("Division by zero in fraction");
+    }
+
+    /* Normalize sign to numerator */
+    if (denom < 0) {
+        numer = -numer;
+        denom = -denom;
+    }
+
+    /* Simplify using GCD */
+    long g = gcd(numer, denom);
+    numer /= g;
+    denom /= g;
+
+    /* If denominator is 1, return as integer */
+    if (denom == 1) {
+        return lval_long(numer);
+    }
+
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_FRAC;
+    v->numer = numer;
+    v->denom = denom;
+    count_inc(v->type);
+    return v;
+}
+
+/* Create fraction: (frac 1 2) -> 1/2 */
+lval* builtin_frac(lenv* e, lval* a) {
+    LASSERT_NUM("frac", a, 2);
+    LASSERT_TYPE("frac", a, 0, LVAL_LONG);
+    LASSERT_TYPE("frac", a, 1, LVAL_LONG);
+
+    lval* numer = lval_pop(a, 0);
+    lval* denom = lval_pop(a, 0);
+
+    lval* result = lval_frac((long)numer->num, (long)denom->num);
+
+    lval_del(numer);
+    lval_del(denom);
+    lval_del(a);
+    return result;
+}
+
+/* Get numerator: (numer (frac 3 4)) -> 3 */
+lval* builtin_numer(lenv* e, lval* a) {
+    LASSERT_NUM("numer", a, 1);
+
+    lval* v = lval_pop(a, 0);
+    lval_del(a);
+
+    if (v->type == LVAL_FRAC) {
+        long n = v->numer;
+        lval_del(v);
+        return lval_long(n);
+    } else if (v->type == LVAL_LONG) {
+        return v;
+    } else {
+        lval* err = lval_err("Function 'numer' requires Fraction or Integer, got %s", ltype_name(v->type));
+        lval_del(v);
+        return err;
+    }
+}
+
+/* Get denominator: (denom (frac 3 4)) -> 4 */
+lval* builtin_denom(lenv* e, lval* a) {
+    LASSERT_NUM("denom", a, 1);
+
+    lval* v = lval_pop(a, 0);
+    lval_del(a);
+
+    if (v->type == LVAL_FRAC) {
+        long d = v->denom;
+        lval_del(v);
+        return lval_long(d);
+    } else if (v->type == LVAL_LONG) {
+        lval_del(v);
+        return lval_long(1);
+    } else {
+        lval* err = lval_err("Function 'denom' requires Fraction or Integer, got %s", ltype_name(v->type));
+        lval_del(v);
+        return err;
+    }
 }

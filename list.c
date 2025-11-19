@@ -149,3 +149,16 @@ void* list_iter(list_t* head) {
     head->curr = head->curr->next;
     return head->curr->val;
 }
+
+void* list_curr(list_t* head) {
+    if (head->curr == NULL) {
+        return NULL;
+    }
+    return head->curr->val;
+}
+
+void list_replace_curr(list_t* head, void* val) {
+    if (head->curr != NULL) {
+        head->curr->val = val;
+    }
+}
