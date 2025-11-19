@@ -179,6 +179,11 @@ lval* lval_eq(lval* x, lval* y) {
            }
            return lval_bool(1);
            break;
+        case LVAL_UTYPE:
+        case LVAL_UVAL:
+           if (strcmp(x->type_name, y->type_name) != 0) { return lval_bool(0); }
+           return lval_eq(x->fields, y->fields);
+           break;
     }
     return lval_bool(0);
 }
@@ -286,6 +291,13 @@ void lval_del(lval* v) {
             /* also free the memory allocated to contain the pointers */
             // TODO: should instead just create some way to delete the list
             list_destroy(v->cell);
+            break;
+
+        /* user-defined types */
+        case LVAL_UTYPE:
+        case LVAL_UVAL:
+            free(v->type_name);
+            lval_del(v->fields);
             break;
     }
     free(v);
@@ -971,6 +983,13 @@ lval* lval_copy(lval* v) {
               list_iter(v->cell);
           }
           break;
+
+        /* copy user-defined types */
+        case LVAL_UTYPE:
+        case LVAL_UVAL:
+          x->type_name = strdup(v->type_name);
+          x->fields = lval_copy(v->fields);
+          break;
     }
 
     return x;
@@ -1015,6 +1034,16 @@ void lval_print(lval* v) {
         case LVAL_SYM:   printf("%s", v->str); break;
         case LVAL_SEXPR: lval_expr_print(v, '(', ')'); break;
         case LVAL_QEXPR: lval_expr_print(v, '{', '}'); break;
+        case LVAL_UTYPE:
+            printf("<type %s ", v->type_name);
+            lval_print(v->fields);
+            printf(">");
+            break;
+        case LVAL_UVAL:
+            printf("<%s ", v->type_name);
+            lval_print(v->fields);
+            printf(">");
+            break;
     }
 }
 
@@ -1146,6 +1175,12 @@ void lenv_add_builtins(lenv* e) {
     lenv_add_builtin(e, "load", builtin_load);
     lenv_add_builtin(e, "print", builtin_print);
     lenv_add_builtin(e, "error", builtin_error);
+
+    // user-defined types
+    lenv_add_builtin(e, "deftype", builtin_deftype);
+    lenv_add_builtin(e, "new", builtin_new);
+    lenv_add_builtin(e, "get", builtin_get);
+    lenv_add_builtin(e, "set", builtin_set);
 }
 
 lenv* lenv_copy(lenv* e) {
@@ -1197,6 +1232,8 @@ char *ltype_name(int t) {
         case LVAL_SYM: return "Symbol";
         case LVAL_SEXPR: return "S-Expression";
         case LVAL_QEXPR: return "Q-Expression";
+        case LVAL_UTYPE: return "User-Type";
+        case LVAL_UVAL: return "User-Value";
         default: return "Unknown";
     }
 }
@@ -1343,4 +1380,273 @@ lval* builtin_or(lenv* e, lval* l) {
     }
     lval_del(l);
     return lval_bool(0);
+}
+
+/* User-defined types */
+
+/* Create a new user type definition */
+lval* lval_utype(char* name, lval* fields) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_UTYPE;
+    v->type_name = strdup(name);
+    v->fields = fields;
+    count_inc(v->type);
+    return v;
+}
+
+/* Create a new user type instance */
+lval* lval_uval(char* type_name, lval* values) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_UVAL;
+    v->type_name = strdup(type_name);
+    v->fields = values;
+    count_inc(v->type);
+    return v;
+}
+
+/* Define a new user type: (deftype {Point} {x y}) */
+lval* builtin_deftype(lenv* e, lval* a) {
+    LASSERT_NUM("deftype", a, 2);
+    LASSERT_TYPE("deftype", a, 0, LVAL_QEXPR);
+    LASSERT_TYPE("deftype", a, 1, LVAL_QEXPR);
+
+    lval* name_qexpr = lval_pop(a, 0);
+    lval* field_names = lval_pop(a, 0);
+
+    /* Name should be a Q-expr with a single symbol */
+    if (name_qexpr->count != 1 || ((lval*)list_index(name_qexpr->cell, 0))->type != LVAL_SYM) {
+        lval_del(name_qexpr);
+        lval_del(field_names);
+        lval_del(a);
+        return lval_err("Type name must be a single symbol in a Q-expression");
+    }
+    lval* name = lval_pop(name_qexpr, 0);
+    lval_del(name_qexpr);
+
+    /* Verify all field names are symbols */
+    list_start(field_names->cell);
+    while (list_end(field_names->cell)) {
+        lval* field = list_curr(field_names->cell);
+        if (field->type != LVAL_SYM) {
+            lval_del(name);
+            lval_del(field_names);
+            lval_del(a);
+            return lval_err("Field names must be symbols");
+        }
+        list_iter(field_names->cell);
+    }
+
+    /* Create the type and bind it */
+    lval* utype = lval_utype(name->str, field_names);
+    lenv_def(e, name, utype);
+
+    lval_del(name);
+    lval_del(utype);
+    lval_del(a);
+    return lval_sexpr();
+}
+
+/* Create instance: (new {Point} 10 20) */
+lval* builtin_new(lenv* e, lval* a) {
+    LASSERT(a, a->count >= 1, "Function 'new' requires at least 1 argument");
+    LASSERT_TYPE("new", a, 0, LVAL_QEXPR);
+
+    /* Get the type name from Q-expr */
+    lval* name_qexpr = lval_pop(a, 0);
+    if (name_qexpr->count != 1 || ((lval*)list_index(name_qexpr->cell, 0))->type != LVAL_SYM) {
+        lval_del(name_qexpr);
+        lval_del(a);
+        return lval_err("Type name must be a single symbol in a Q-expression");
+    }
+    lval* type_sym = lval_pop(name_qexpr, 0);
+    lval_del(name_qexpr);
+
+    lval* utype = lenv_get(e, type_sym);
+
+    if (utype->type == LVAL_ERR) {
+        lval_del(type_sym);
+        lval_del(a);
+        return utype;
+    }
+
+    if (utype->type != LVAL_UTYPE) {
+        lval* err = lval_err("'%s' is not a user-defined type", type_sym->str);
+        lval_del(type_sym);
+        lval_del(utype);
+        lval_del(a);
+        return err;
+    }
+
+    /* Check argument count matches field count */
+    int field_count = utype->fields->count;
+    if (a->count != field_count) {
+        lval* err = lval_err("Type '%s' expects %d fields, got %d",
+                            type_sym->str, field_count, a->count);
+        lval_del(type_sym);
+        lval_del(utype);
+        lval_del(a);
+        return err;
+    }
+
+    /* Create the instance with values */
+    lval* values = lval_qexpr();
+    while (a->count > 0) {
+        lval_add(values, lval_pop(a, 0));
+    }
+
+    lval* instance = lval_uval(type_sym->str, values);
+
+    lval_del(type_sym);
+    lval_del(utype);
+    lval_del(a);
+    return instance;
+}
+
+/* Get field value: (get instance {field_name}) */
+lval* builtin_get(lenv* e, lval* a) {
+    LASSERT_NUM("get", a, 2);
+    LASSERT_TYPE("get", a, 0, LVAL_UVAL);
+    LASSERT_TYPE("get", a, 1, LVAL_QEXPR);
+
+    lval* instance = lval_pop(a, 0);
+    lval* field_qexpr = lval_pop(a, 0);
+
+    if (field_qexpr->count != 1 || ((lval*)list_index(field_qexpr->cell, 0))->type != LVAL_SYM) {
+        lval_del(instance);
+        lval_del(field_qexpr);
+        lval_del(a);
+        return lval_err("Field name must be a single symbol in a Q-expression");
+    }
+    lval* field_name = lval_pop(field_qexpr, 0);
+    lval_del(field_qexpr);
+
+    /* Look up the type to get field names */
+    lval* type_sym = lval_sym(instance->type_name);
+    lval* utype = lenv_get(e, type_sym);
+    lval_del(type_sym);
+
+    if (utype->type != LVAL_UTYPE) {
+        lval_del(instance);
+        lval_del(field_name);
+        lval_del(utype);
+        lval_del(a);
+        return lval_err("Type '%s' not found", instance->type_name);
+    }
+
+    /* Find field index */
+    int index = -1;
+    int i = 0;
+    list_start(utype->fields->cell);
+    while (list_end(utype->fields->cell)) {
+        lval* field = list_curr(utype->fields->cell);
+        if (strcmp(field->str, field_name->str) == 0) {
+            index = i;
+            break;
+        }
+        i++;
+        list_iter(utype->fields->cell);
+    }
+
+    if (index == -1) {
+        lval* err = lval_err("Field '%s' not found in type '%s'",
+                           field_name->str, instance->type_name);
+        lval_del(instance);
+        lval_del(field_name);
+        lval_del(utype);
+        lval_del(a);
+        return err;
+    }
+
+    /* Get the value at that index */
+    lval* result = lval_copy((lval*)list_index(instance->fields->cell, index));
+
+    lval_del(instance);
+    lval_del(field_name);
+    lval_del(utype);
+    lval_del(a);
+    return result;
+}
+
+/* Set field value: (set instance {field_name} value) - returns new instance */
+lval* builtin_set(lenv* e, lval* a) {
+    LASSERT_NUM("set", a, 3);
+    LASSERT_TYPE("set", a, 0, LVAL_UVAL);
+    LASSERT_TYPE("set", a, 1, LVAL_QEXPR);
+
+    lval* instance = lval_pop(a, 0);
+    lval* field_qexpr = lval_pop(a, 0);
+    lval* new_value = lval_pop(a, 0);
+
+    if (field_qexpr->count != 1 || ((lval*)list_index(field_qexpr->cell, 0))->type != LVAL_SYM) {
+        lval_del(instance);
+        lval_del(field_qexpr);
+        lval_del(new_value);
+        lval_del(a);
+        return lval_err("Field name must be a single symbol in a Q-expression");
+    }
+    lval* field_name = lval_pop(field_qexpr, 0);
+    lval_del(field_qexpr);
+
+    /* Look up the type to get field names */
+    lval* type_sym = lval_sym(instance->type_name);
+    lval* utype = lenv_get(e, type_sym);
+    lval_del(type_sym);
+
+    if (utype->type != LVAL_UTYPE) {
+        lval_del(instance);
+        lval_del(field_name);
+        lval_del(new_value);
+        lval_del(utype);
+        lval_del(a);
+        return lval_err("Type '%s' not found", instance->type_name);
+    }
+
+    /* Find field index */
+    int index = -1;
+    int i = 0;
+    list_start(utype->fields->cell);
+    while (list_end(utype->fields->cell)) {
+        lval* field = list_curr(utype->fields->cell);
+        if (strcmp(field->str, field_name->str) == 0) {
+            index = i;
+            break;
+        }
+        i++;
+        list_iter(utype->fields->cell);
+    }
+
+    if (index == -1) {
+        lval* err = lval_err("Field '%s' not found in type '%s'",
+                           field_name->str, instance->type_name);
+        lval_del(instance);
+        lval_del(field_name);
+        lval_del(new_value);
+        lval_del(utype);
+        lval_del(a);
+        return err;
+    }
+
+    /* Create a new instance with the updated value */
+    lval* new_values = lval_qexpr();
+    i = 0;
+    list_start(instance->fields->cell);
+    while (list_end(instance->fields->cell)) {
+        lval* v = list_curr(instance->fields->cell);
+        if (i == index) {
+            lval_add(new_values, lval_copy(new_value));
+        } else {
+            lval_add(new_values, lval_copy(v));
+        }
+        i++;
+        list_iter(instance->fields->cell);
+    }
+
+    lval* result = lval_uval(instance->type_name, new_values);
+
+    lval_del(instance);
+    lval_del(field_name);
+    lval_del(new_value);
+    lval_del(utype);
+    lval_del(a);
+    return result;
 }

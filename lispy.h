@@ -23,6 +23,10 @@ struct lval {
     /* count and pointer to a list of lval* */
     int count;
     list_t* cell;
+
+    /* user-defined type fields */
+    char* type_name;      /* name of the user-defined type */
+    lval* fields;         /* field names (for type definition) or values (for instance) */
 };
 
 struct lenv {
@@ -140,6 +144,14 @@ char* ltype_name(int t);
 /* lambda stuff */
 lval* lval_lambda(lval*, lval*);
 
+/* user-defined types */
+lval* lval_utype(char* name, lval* fields);
+lval* lval_uval(char* type_name, lval* values);
+lval* builtin_deftype(lenv* e, lval* a);
+lval* builtin_new(lenv* e, lval* a);
+lval* builtin_get(lenv* e, lval* a);
+lval* builtin_set(lenv* e, lval* a);
+
 /* Possible lval types */
 enum {
     LVAL_ERR,   // 0
@@ -150,7 +162,9 @@ enum {
     LVAL_SYM,   // 5
     LVAL_FUN,   // 6
     LVAL_SEXPR, // 7
-    LVAL_QEXPR  // 8
+    LVAL_QEXPR, // 8
+    LVAL_UTYPE, // 9  - user-defined type definition
+    LVAL_UVAL   // 10 - user-defined type instance
 };
 
 /* Possible error types */
