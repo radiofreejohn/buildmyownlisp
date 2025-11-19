@@ -319,6 +319,93 @@ void suite_fractions(void) {
     pt_add_test(test_frac_numer_denom, "Test Frac Numer/Denom", "Fractions");
 }
 
+/* Test suite for debug builtin */
+void test_debug_eval(void) {
+    lenv* e = lenv_new();
+    lenv_add_builtins(e);
+
+    /* Debug should evaluate expression and return result */
+    lval* result = eval_string(e, "(debug {(+ 1 2)})");
+    PT_ASSERT(result->type == LVAL_LONG);
+    PT_ASSERT((long)result->num == 3);
+    lval_del(result);
+
+    lenv_del(e);
+}
+
+void test_debug_nested(void) {
+    lenv* e = lenv_new();
+    lenv_add_builtins(e);
+
+    /* Debug with nested expressions */
+    lval* result = eval_string(e, "(debug {(* 2 (+ 3 4))})");
+    PT_ASSERT(result->type == LVAL_LONG);
+    PT_ASSERT((long)result->num == 14);
+    lval_del(result);
+
+    lenv_del(e);
+}
+
+void suite_debug(void) {
+    pt_add_test(test_debug_eval, "Test Debug Eval", "Debug");
+    pt_add_test(test_debug_nested, "Test Debug Nested", "Debug");
+}
+
+/* Test suite for threads */
+void test_spawn_wait(void) {
+    lenv* e = lenv_new();
+    lenv_add_builtins(e);
+
+    /* Spawn a thread and wait for result */
+    lval* result = eval_string(e, "(wait (spawn {(+ 10 20)}))");
+    PT_ASSERT(result->type == LVAL_LONG);
+    PT_ASSERT((long)result->num == 30);
+    lval_del(result);
+
+    lenv_del(e);
+}
+
+void test_multiple_threads(void) {
+    lenv* e = lenv_new();
+    lenv_add_builtins(e);
+
+    /* Spawn multiple threads */
+    eval_string(e, "(def {t1} (spawn {(* 3 4)}))");
+    eval_string(e, "(def {t2} (spawn {(+ 5 6)}))");
+
+    lval* r1 = eval_string(e, "(wait t1)");
+    PT_ASSERT(r1->type == LVAL_LONG);
+    PT_ASSERT((long)r1->num == 12);
+    lval_del(r1);
+
+    lval* r2 = eval_string(e, "(wait t2)");
+    PT_ASSERT(r2->type == LVAL_LONG);
+    PT_ASSERT((long)r2->num == 11);
+    lval_del(r2);
+
+    lenv_del(e);
+}
+
+void test_thread_with_env(void) {
+    lenv* e = lenv_new();
+    lenv_add_builtins(e);
+
+    /* Thread should see variables from parent environment */
+    eval_string(e, "(def {x} 100)");
+    lval* result = eval_string(e, "(wait (spawn {(+ x 1)}))");
+    PT_ASSERT(result->type == LVAL_LONG);
+    PT_ASSERT((long)result->num == 101);
+    lval_del(result);
+
+    lenv_del(e);
+}
+
+void suite_threads(void) {
+    pt_add_test(test_spawn_wait, "Test Spawn Wait", "Threads");
+    pt_add_test(test_multiple_threads, "Test Multiple Threads", "Threads");
+    pt_add_test(test_thread_with_env, "Test Thread With Env", "Threads");
+}
+
 /* Initialize parsers - must be called before tests */
 void init_parsers(void) {
     Number  = mpc_new("number");
@@ -359,6 +446,8 @@ int main(int argc, char** argv) {
     pt_add_suite(suite_casting);
     pt_add_suite(suite_user_types);
     pt_add_suite(suite_fractions);
+    pt_add_suite(suite_debug);
+    pt_add_suite(suite_threads);
 
     int result = pt_run();
 
