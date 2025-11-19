@@ -137,6 +137,10 @@ lval* builtin_error(lenv* e, lval* a);
 lval* builtin_debug(lenv* e, lval* a);
 lval* lval_eval_debug(lenv* e, lval* v, int depth);
 
+// threads
+lval* builtin_spawn(lenv* e, lval* a);
+lval* builtin_wait(lenv* e, lval* a);
+
 lval* lval_join(lval*, lval*);
 lval* lval_copy(lval*);
 void  lval_del(lval*);

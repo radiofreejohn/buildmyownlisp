@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 /* this is only included in *BSD/Mac OS X
    I prefer it over hsearch because it allows multiple
    hash tables */
@@ -11,6 +12,36 @@
 #include "list.h"
 
 #include <editline/readline.h>
+
+/* Thread support structures */
+typedef struct {
+    pthread_t thread;
+    lenv* env;
+    lval* expr;
+    lval* result;
+    int completed;
+} lthread;
+
+static pthread_mutex_t thread_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Simple thread pool for tracking */
+#define MAX_THREADS 256
+static lthread* thread_pool[MAX_THREADS];
+static int thread_count = 0;
+
+/* Thread execution function */
+static void* thread_run(void* arg) {
+    lthread* t = (lthread*)arg;
+
+    /* Evaluate the expression in the thread's environment */
+    t->result = lval_eval(t->env, t->expr);
+
+    pthread_mutex_lock(&thread_mutex);
+    t->completed = 1;
+    pthread_mutex_unlock(&thread_mutex);
+
+    return NULL;
+}
 
 /* Length-prefixed string implementation */
 
@@ -75,6 +106,85 @@ int lstr_cmp(lstr* a, lstr* b) {
 #define LASSERT_NOT_EMPTY(func, args, index) \
     LASSERT(args, ((lval*)list_index(args->cell, index))->count != 0, \
             "Function '%s' passed {} for argument %d.", func, index)
+
+/* Spawn a new thread: (spawn {expr}) -> thread-id */
+lval* builtin_spawn(lenv* e, lval* a) {
+    LASSERT_NUM("spawn", a, 1);
+    LASSERT_TYPE("spawn", a, 0, LVAL_QEXPR);
+
+    pthread_mutex_lock(&thread_mutex);
+    if (thread_count >= MAX_THREADS) {
+        pthread_mutex_unlock(&thread_mutex);
+        lval_del(a);
+        return lval_err("Maximum number of threads (%d) exceeded", MAX_THREADS);
+    }
+
+    /* Create thread structure */
+    lthread* t = malloc(sizeof(lthread));
+    t->env = lenv_copy(e);
+    t->expr = lval_pop(a, 0);
+    t->expr->type = LVAL_SEXPR;  /* Convert Q-expr to S-expr for evaluation */
+    t->result = NULL;
+    t->completed = 0;
+
+    /* Store in pool and get ID */
+    int thread_id = thread_count;
+    thread_pool[thread_count++] = t;
+    pthread_mutex_unlock(&thread_mutex);
+
+    /* Create the thread */
+    if (pthread_create(&t->thread, NULL, thread_run, t) != 0) {
+        pthread_mutex_lock(&thread_mutex);
+        thread_count--;
+        pthread_mutex_unlock(&thread_mutex);
+        lenv_del(t->env);
+        lval_del(t->expr);
+        free(t);
+        lval_del(a);
+        return lval_err("Failed to create thread");
+    }
+
+    lval_del(a);
+    return lval_long(thread_id);
+}
+
+/* Wait for a thread to complete: (wait thread-id) -> result */
+lval* builtin_wait(lenv* e, lval* a) {
+    LASSERT_NUM("wait", a, 1);
+    LASSERT_TYPE("wait", a, 0, LVAL_LONG);
+
+    int thread_id = (int)((lval*)list_index(a->cell, 0))->num;
+    lval_del(a);
+
+    pthread_mutex_lock(&thread_mutex);
+    if (thread_id < 0 || thread_id >= thread_count) {
+        pthread_mutex_unlock(&thread_mutex);
+        return lval_err("Invalid thread ID: %d", thread_id);
+    }
+
+    lthread* t = thread_pool[thread_id];
+    if (t == NULL) {
+        pthread_mutex_unlock(&thread_mutex);
+        return lval_err("Thread %d already waited", thread_id);
+    }
+    pthread_mutex_unlock(&thread_mutex);
+
+    /* Wait for thread to complete */
+    pthread_join(t->thread, NULL);
+
+    /* Get the result */
+    lval* result = t->result;
+
+    /* Clean up */
+    lenv_del(t->env);
+    free(t);
+
+    pthread_mutex_lock(&thread_mutex);
+    thread_pool[thread_id] = NULL;
+    pthread_mutex_unlock(&thread_mutex);
+
+    return result;
+}
 
 int counter;
 int debug;
@@ -1551,6 +1661,10 @@ void lenv_add_builtins(lenv* e) {
 
     // debugging
     lenv_add_builtin(e, "debug", builtin_debug);
+
+    // threads
+    lenv_add_builtin(e, "spawn", builtin_spawn);
+    lenv_add_builtin(e, "wait", builtin_wait);
 }
 
 lenv* lenv_copy(lenv* e) {
