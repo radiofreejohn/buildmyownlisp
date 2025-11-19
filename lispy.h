@@ -102,6 +102,11 @@ lval* builtin_str_op(lenv*, lval*, char*);
 lval* builtin_str(lenv*, lval*);
 lval* builtin_strlen(lenv*, lval*);
 
+// type casting
+lval* builtin_int(lenv*, lval*);
+lval* builtin_float_cast(lenv*, lval*);
+lval* builtin_bool_cast(lenv*, lval*);
+
 // file loading
 lval* builtin_load(lenv* e, lval* a);
 

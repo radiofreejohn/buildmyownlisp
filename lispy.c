@@ -702,6 +702,118 @@ lval* builtin_strlen(lenv* e, lval* a) {
     return lval_long(len);
 }
 
+/* Type casting builtins */
+
+/* Convert to integer: (int 3.14) -> 3, (int "42") -> 42, (int true) -> 1 */
+lval* builtin_int(lenv* e, lval* a) {
+    LASSERT_NUM("int", a, 1);
+    lval* v = lval_pop(a, 0);
+    lval_del(a);
+
+    switch (v->type) {
+        case LVAL_LONG:
+            return v;
+        case LVAL_FLOAT: {
+            long result = (long)v->num;
+            lval_del(v);
+            return lval_long(result);
+        }
+        case LVAL_BOOL: {
+            long result = (int)v->num;
+            lval_del(v);
+            return lval_long(result);
+        }
+        case LVAL_STR: {
+            char* endptr;
+            long result = strtol(v->str, &endptr, 10);
+            if (*endptr != '\0') {
+                lval* err = lval_err("Cannot convert string '%s' to integer", v->str);
+                lval_del(v);
+                return err;
+            }
+            lval_del(v);
+            return lval_long(result);
+        }
+        default: {
+            lval* err = lval_err("Cannot convert %s to integer", ltype_name(v->type));
+            lval_del(v);
+            return err;
+        }
+    }
+}
+
+/* Convert to float: (float 3) -> 3.0, (float "3.14") -> 3.14 */
+lval* builtin_float_cast(lenv* e, lval* a) {
+    LASSERT_NUM("float", a, 1);
+    lval* v = lval_pop(a, 0);
+    lval_del(a);
+
+    switch (v->type) {
+        case LVAL_FLOAT:
+            return v;
+        case LVAL_LONG: {
+            float result = v->num;
+            lval_del(v);
+            return lval_float(result);
+        }
+        case LVAL_BOOL: {
+            float result = v->num;
+            lval_del(v);
+            return lval_float(result);
+        }
+        case LVAL_STR: {
+            char* endptr;
+            float result = strtof(v->str, &endptr);
+            if (*endptr != '\0') {
+                lval* err = lval_err("Cannot convert string '%s' to float", v->str);
+                lval_del(v);
+                return err;
+            }
+            lval_del(v);
+            return lval_float(result);
+        }
+        default: {
+            lval* err = lval_err("Cannot convert %s to float", ltype_name(v->type));
+            lval_del(v);
+            return err;
+        }
+    }
+}
+
+/* Convert to boolean: (bool 0) -> false, (bool 1) -> true, (bool "") -> false */
+lval* builtin_bool_cast(lenv* e, lval* a) {
+    LASSERT_NUM("bool", a, 1);
+    lval* v = lval_pop(a, 0);
+    lval_del(a);
+
+    switch (v->type) {
+        case LVAL_BOOL:
+            return v;
+        case LVAL_LONG:
+        case LVAL_FLOAT: {
+            int result = (v->num != 0);
+            lval_del(v);
+            return lval_bool(result);
+        }
+        case LVAL_STR: {
+            int result = (strlen(v->str) > 0);
+            lval_del(v);
+            return lval_bool(result);
+        }
+        case LVAL_QEXPR:
+        case LVAL_SEXPR: {
+            int result = (v->count > 0);
+            lval_del(v);
+            return lval_bool(result);
+        }
+        default: {
+            lval* err = lval_err("Cannot convert %s to boolean", ltype_name(v->type));
+            lval_del(v);
+            return err;
+        }
+    }
+}
+
 lval* builtin_head(lenv* e, lval* a) {
     /* check error conditions */
     LASSERT(a, (a->count == 1),                  "Function 'head' passed too many arguments. Got %d, expected %d.", a->count, 1);
@@ -1170,6 +1282,11 @@ void lenv_add_builtins(lenv* e) {
     // strings
     lenv_add_builtin(e, "str", builtin_str);
     lenv_add_builtin(e, "strlen", builtin_strlen);
+
+    // type casting
+    lenv_add_builtin(e, "int", builtin_int);
+    lenv_add_builtin(e, "float", builtin_float_cast);
+    lenv_add_builtin(e, "bool", builtin_bool_cast);
 
     // load and print
     lenv_add_builtin(e, "load", builtin_load);
