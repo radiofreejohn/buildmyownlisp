@@ -91,6 +91,32 @@ void count_dec(int ltype) {
     }
 }
 
+/* Check if input has balanced brackets. Returns 0 if balanced, >0 if more opens */
+static int bracket_balance(const char* input) {
+    int balance = 0;
+    int in_string = 0;
+
+    for (int i = 0; input[i] != '\0'; i++) {
+        char c = input[i];
+
+        /* Handle string literals - don't count brackets inside strings */
+        if (c == '"' && (i == 0 || input[i-1] != '\\')) {
+            in_string = !in_string;
+            continue;
+        }
+
+        if (!in_string) {
+            if (c == '(' || c == '{') {
+                balance++;
+            } else if (c == ')' || c == '}') {
+                balance--;
+            }
+        }
+    }
+
+    return balance;
+}
+
 #ifndef LISPY_TEST
 int main(int argc, char **argv) {
     counter = 0;
@@ -135,6 +161,33 @@ int main(int argc, char **argv) {
 
             /* Output our prompt and get input */
             char* input = readline("lispy> ");
+            if (!input) break;  /* Handle EOF */
+
+            /* Multi-line input: keep reading if brackets aren't balanced */
+            int balance = bracket_balance(input);
+            size_t input_len = strlen(input);
+            size_t input_cap = input_len + 1;
+
+            while (balance > 0) {
+                char* continuation = readline("...... ");
+                if (!continuation) break;
+
+                /* Resize input buffer and append continuation */
+                size_t cont_len = strlen(continuation);
+                size_t new_len = input_len + 1 + cont_len;  /* +1 for newline */
+
+                if (new_len + 1 > input_cap) {
+                    input_cap = new_len + 256;  /* Grow with some slack */
+                    input = realloc(input, input_cap);
+                }
+
+                input[input_len] = '\n';
+                memcpy(input + input_len + 1, continuation, cont_len + 1);
+                input_len = new_len;
+
+                free(continuation);
+                balance = bracket_balance(input);
+            }
 
             /* Add input to history */
             add_history(input);
@@ -142,17 +195,20 @@ int main(int argc, char **argv) {
             // temporary hacks
             if (strcmp(input, "refs") == 0) {
                 printf("refs: %d\n", counter);
+                free(input);
                 continue;
             }
             if (strcmp(input, "debug") == 0) {
                 printf("debugging refs\n");
                 debug = (debug + 1) % 2;
+                free(input);
                 continue;
             }
             if (strcmp(input, "builtins") == 0) {
                 printf("%d builtins:\n", e->count);
                 hash_traverse(e->syms, lenv_hash_print_keys, NULL);
                 printf("\n");
+                free(input);
                 continue;
             }
 
