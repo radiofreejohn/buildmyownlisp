@@ -1,0 +1,100 @@
+; Test suite for help system
+; Run with: ./lispy tests/test_help.lspy
+
+(print "=== Help System Tests ===\n")
+
+; Test 1: Help for print function
+(print "Test 1: help for print\n")
+(help "print")
+(print "\n")
+
+; Test 2: Help for math operations
+(print "Test 2: help for +\n")
+(help "+")
+(print "\n")
+
+(print "Test 3: help for -\n")
+(help "-")
+(print "\n")
+
+; Test 4: Help for list functions
+(print "Test 4: help for list\n")
+(help "list")
+(print "\n")
+
+(print "Test 5: help for head\n")
+(help "head")
+(print "\n")
+
+(print "Test 6: help for tail\n")
+(help "tail")
+(print "\n")
+
+; Test 7: Help for conditionals
+(print "Test 7: help for if\n")
+(help "if")
+(print "\n")
+
+; Test 8: Help for lambda
+(print "Test 8: help for \\\n")
+(help "\\")
+(print "\n")
+
+; Test 9: Help for definition functions
+(print "Test 9: help for def\n")
+(help "def")
+(print "\n")
+
+; Test 10: Help for comparison
+(print "Test 10: help for eq\n")
+(help "eq")
+(print "\n")
+
+; Test 11: Help for load
+(print "Test 11: help for load\n")
+(help "load")
+(print "\n")
+
+; Test 12: Help for error
+(print "Test 12: help for error\n")
+(help "error")
+(print "\n")
+
+; Test 13: Help for string functions
+(print "Test 13: help for str\n")
+(help "str")
+(print "\n")
+
+(print "Test 14: help for strlen\n")
+(help "strlen")
+(print "\n")
+
+; Test 15: Help for join
+(print "Test 15: help for join\n")
+(help "join")
+(print "\n")
+
+; Test 16: Help for eval
+(print "Test 16: help for eval\n")
+(help "eval")
+(print "\n")
+
+; Test 17: Help for logical operators
+(print "Test 17: help for and\n")
+(help "and")
+(print "\n")
+
+(print "Test 18: help for or\n")
+(help "or")
+(print "\n")
+
+(print "Test 19: help for not\n")
+(help "not")
+(print "\n")
+
+; Test 20: Help for help itself
+(print "Test 20: help for help\n")
+(help "help")
+(print "\n")
+
+(print "=== All Help Tests Completed ===\n")

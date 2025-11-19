@@ -105,6 +105,9 @@ lval* builtin_load(lenv* e, lval* a);
 lval* builtin_print(lenv* e, lval* a);
 lval* builtin_error(lenv* e, lval* a);
 
+// help
+lval* builtin_help(lenv* e, lval* a);
+
 lval* lval_join(lval*, lval*);
 lval* lval_copy(lval*);
 void  lval_del(lval*);

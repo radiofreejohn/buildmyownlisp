@@ -1,0 +1,22 @@
+; Test error handling for help system
+; Run with: ./lispy tests/test_help_errors.lspy
+
+(print "=== Help Error Handling Tests ===\n")
+
+; Test 1: Help for nonexistent function (should show error)
+(print "Test 1: help for nonexistent function\n")
+(help "nonexistent")
+(print "\n")
+
+; Test 2: Help for another unknown function
+(print "Test 2: help for unknown\n")
+(help "foobar")
+(print "\n")
+
+; Test 3: Help with wrong argument type (function instead of string)
+; Note: This will show an error since 'print' gets evaluated to a function
+(print "Test 3: help with evaluated function (expected error)\n")
+(help print)
+(print "\n")
+
+(print "=== Error Tests Completed ===\n")
