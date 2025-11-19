@@ -32,7 +32,8 @@ Read it online: http://www.buildyourownlisp.com/
 * higher-order functions - built-in map, filter, reduce for better performance
 
 ### Error Handling
-* try/catch - `(try {(/ 1 0)} {err} {(print err)})`
+* error returns - `(def {result err} (safe-div 10 0))` with explicit (value, err) tuples
+* try block - `(try {expr})` catches error returns in nested calls
 * stack traces - show call stack on errors
 
 ### I/O Operations
