@@ -39,6 +39,9 @@ struct lval {
     lval* formals;
     lval* body;
 
+    /* documentation string for builtins */
+    char* doc;
+
     /* count and pointer to a list of lval* */
     int count;
     list_t* cell;
@@ -165,7 +168,7 @@ lenv* lenv_new(void);
 void  lenv_del(lenv*);
 lval* lenv_get(lenv*, lval*);
 void  lenv_put(lenv*, lval*, lval*);
-void lenv_add_builtin(lenv*, char*, lbuiltin);
+void lenv_add_builtin(lenv*, char*, lbuiltin, char*);
 void lenv_add_builtins(lenv*);
 lenv* lenv_copy(lenv* e);
 void lenv_def(lenv*, lval*, lval*);

@@ -13,75 +13,6 @@
 
 #include <editline/readline.h>
 
-/* Help system - maps builtin names to their help strings */
-typedef struct {
-    char* name;
-    char* help;
-} builtin_help_entry;
-
-static builtin_help_entry builtin_help_entries[] = {
-    /* Variable functions */
-    {"\\", "Create a lambda function.\n  Usage: (\\ {args} {body})\n  Example: (def {add} (\\ {x y} {+ x y}))"},
-    {"def", "Define a global variable.\n  Usage: (def {name} value)\n  Example: (def {x} 10)"},
-    {"=", "Define a local variable.\n  Usage: (= {name} value)\n  Example: (= {x} 10)"},
-
-    /* List functions */
-    {"list", "Create a list from arguments, or convert string to list of chars.\n  Usage: (list items...)\n  Example: (list 1 2 3) -> {1 2 3}"},
-    {"head", "Return first element of a list.\n  Usage: (head {list})\n  Example: (head {1 2 3}) -> {1}"},
-    {"tail", "Return list without first element.\n  Usage: (tail {list})\n  Example: (tail {1 2 3}) -> {2 3}"},
-    {"eval", "Evaluate a list as an expression.\n  Usage: (eval {expr})\n  Example: (eval {+ 1 2}) -> 3"},
-    {"join", "Join multiple lists together.\n  Usage: (join {list1} {list2} ...)\n  Example: (join {1 2} {3 4}) -> {1 2 3 4}"},
-
-    /* Math functions */
-    {"+", "Add numbers.\n  Usage: (+ num1 num2 ...)\n  Example: (+ 1 2 3) -> 6"},
-    {"-", "Subtract numbers, or negate a single number.\n  Usage: (- num1 num2 ...) or (- num)\n  Example: (- 10 3) -> 7"},
-    {"*", "Multiply numbers.\n  Usage: (* num1 num2 ...)\n  Example: (* 2 3 4) -> 24"},
-    {"/", "Divide numbers.\n  Usage: (/ num1 num2 ...)\n  Example: (/ 10 2) -> 5"},
-
-    /* Comparison functions */
-    {"eq", "Check equality of two values.\n  Usage: (eq val1 val2)\n  Example: (eq 1 1) -> true"},
-    {"ne", "Check inequality of two values.\n  Usage: (ne val1 val2)\n  Example: (ne 1 2) -> true"},
-    {"lt", "Check if first number is less than second.\n  Usage: (lt num1 num2)\n  Example: (lt 1 2) -> true"},
-    {"gt", "Check if first number is greater than second.\n  Usage: (gt num1 num2)\n  Example: (gt 2 1) -> true"},
-    {"le", "Check if first number is less than or equal to second.\n  Usage: (le num1 num2)\n  Example: (le 1 1) -> true"},
-    {"ge", "Check if first number is greater than or equal to second.\n  Usage: (ge num1 num2)\n  Example: (ge 2 1) -> true"},
-
-    /* Logical functions */
-    {"if", "Conditional expression.\n  Usage: (if condition {true-expr} {false-expr})\n  Example: (if (gt x 0) {\"positive\"} {\"non-positive\"})"},
-    {"not", "Logical negation.\n  Usage: (not bool)\n  Example: (not true) -> false"},
-    {"and", "Logical AND of all arguments.\n  Usage: (and bool1 bool2 ...)\n  Example: (and true true) -> true"},
-    {"or", "Logical OR of all arguments.\n  Usage: (or bool1 bool2 ...)\n  Example: (or false true) -> true"},
-
-    /* String functions */
-    {"str", "Convert values to string and concatenate.\n  Usage: (str val1 val2 ...)\n  Example: (str \"x=\" 42) -> \"x=42\""},
-    {"strlen", "Get length of a string.\n  Usage: (strlen string)\n  Example: (strlen \"hello\") -> 5"},
-
-    /* Type conversion */
-    {"int", "Convert value to integer.\n  Usage: (int value)\n  Example: (int 3.7) -> 3"},
-    {"float", "Convert value to float.\n  Usage: (float value)\n  Example: (float 3) -> 3.0"},
-    {"bool", "Convert value to boolean.\n  Usage: (bool value)\n  Example: (bool 1) -> true"},
-
-    /* I/O functions */
-    {"load", "Load and execute a lispy file.\n  Usage: (load \"filename\")\n  Example: (load \"stdlib.lspy\")"},
-    {"print", "Print values to stdout.\n  Usage: (print val1 val2 ...)\n  Example: (print \"Hello\" \"World\")"},
-    {"error", "Create an error with a message.\n  Usage: (error \"message\")\n  Example: (error \"Something went wrong\")"},
-
-    /* Help */
-    {"help", "Show help for builtins.\n  Usage: (help) or (help \"name\")\n  Example: (help \"print\")"},
-
-    {NULL, NULL}  /* sentinel */
-};
-
-/* Get help string for a builtin by name */
-char* get_builtin_help(char* name) {
-    for (int i = 0; builtin_help_entries[i].name != NULL; i++) {
-        if (strcmp(builtin_help_entries[i].name, name) == 0) {
-            return builtin_help_entries[i].help;
-        }
-    }
-    return NULL;
-}
-
 /* Thread support structures */
 typedef struct {
     pthread_t thread;
@@ -518,10 +449,11 @@ lval* lval_err(char* fmt, ...) {
     return v;
 }
 
-lval* lval_builtin(lbuiltin func) {
+lval* lval_builtin(lbuiltin func, char* doc) {
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_FUN;
     v->builtin = func;
+    v->doc = doc ? strdup(doc) : NULL;
     count_inc(v->type);
     return v;
 }
@@ -569,6 +501,7 @@ void lval_del(lval* v) {
                    lval_del(v->formals);
                    lval_del(v->body);
             }
+            if (v->doc) { free(v->doc); }
             break;
     
         /* free string data */
@@ -686,50 +619,96 @@ lval* builtin_error(lenv* e, lval* a) {
     return err;
 }
 
+/* Helper to print short description from doc string */
+static void print_short_help(char* name, char* doc) {
+    if (!doc) {
+        printf("  %-8s (no documentation)\n", name);
+        return;
+    }
+    char* newline = strchr(doc, '\n');
+    if (newline) {
+        int len = newline - doc;
+        printf("  %-8s %.*s\n", name, len, doc);
+    } else {
+        printf("  %-8s %s\n", name, doc);
+    }
+}
+
+/* Hash traversal callback to print help for all builtins */
+static int print_builtin_help(char* key, lval* v, void* unused) {
+    (void)unused;
+    if (v->type == LVAL_FUN && v->builtin) {
+        print_short_help(key, v->doc);
+    }
+    return 1;
+}
+
 lval* builtin_help(lenv* e, lval* a) {
     if (a->count == 0) {
         /* No arguments - list all builtins with short descriptions */
         printf("Available builtins:\n\n");
-        for (int i = 0; builtin_help_entries[i].name != NULL; i++) {
-            /* Print name and first line of help (up to newline) */
-            char* help = builtin_help_entries[i].help;
-            char* newline = strchr(help, '\n');
-            if (newline) {
-                int len = newline - help;
-                printf("  %-8s %.*s\n", builtin_help_entries[i].name, len, help);
-            } else {
-                printf("  %-8s %s\n", builtin_help_entries[i].name, help);
-            }
-        }
-        printf("\nUse (help \"name\") for detailed help on a specific builtin.\n");
+
+        /* Get to the global environment */
+        lenv* global = e;
+        while (global->par) { global = global->par; }
+
+        /* Traverse all symbols and print help for builtins */
+        hash_traverse(global->syms, print_builtin_help, NULL);
+
+        printf("\nUse (help {name}) for detailed help on a specific builtin.\n");
         lval_del(a);
         return lval_sexpr();
     } else if (a->count == 1) {
         /* One argument - show detailed help for that builtin */
         lval* arg = (lval*)list_index(a->cell, 0);
-        char* name;
 
+        /* Accept a string, symbol, or Q-expr containing a symbol */
+        char* name;
         if (arg->type == LVAL_STR) {
             name = arg->str;
         } else if (arg->type == LVAL_SYM) {
             name = arg->str;
+        } else if (arg->type == LVAL_QEXPR && arg->count == 1) {
+            lval* inner = (lval*)list_index(arg->cell, 0);
+            if (inner->type == LVAL_SYM) {
+                name = inner->str;
+            } else {
+                lval* err = lval_err("Function 'help' requires a symbol or string. Got %s.\n  Usage: (help {print}) or (help \"print\")", ltype_name(inner->type));
+                lval_del(a);
+                return err;
+            }
         } else {
-            lval* err = lval_err("Function 'help' requires a string argument. Got %s.\n  Usage: (help \"print\")", ltype_name(arg->type));
+            lval* err = lval_err("Function 'help' requires a symbol or string. Got %s.\n  Usage: (help {print}) or (help \"print\")", ltype_name(arg->type));
             lval_del(a);
             return err;
         }
 
-        char* help = get_builtin_help(name);
+        /* Look up the symbol in the environment */
+        lval* sym = lval_sym(name);
+        lval* val = lenv_get(e, sym);
+        lval_del(sym);
 
-        if (help) {
-            printf("%s\n", help);
+        if (val->type == LVAL_ERR) {
             lval_del(a);
-            return lval_sexpr();
-        } else {
-            lval* err = lval_err("No help available for '%s'", name);
+            return val;
+        }
+
+        if (val->type != LVAL_FUN) {
+            lval* err = lval_err("'%s' is not a function (type: %s)", name, ltype_name(val->type));
+            lval_del(val);
             lval_del(a);
             return err;
         }
+
+        if (val->doc) {
+            printf("%s\n", val->doc);
+        } else {
+            printf("No documentation available for '%s'\n", name);
+        }
+
+        lval_del(val);
+        lval_del(a);
+        return lval_sexpr();
     } else {
         lval* err = lval_err("Function 'help' passed too many arguments. Got %d, expected 0 or 1.", a->count);
         lval_del(a);
@@ -1541,7 +1520,7 @@ lval* lval_copy(lval* v) {
     count_inc(v->type);
     switch (v->type) {
         /* copy functions and numbers directly */
-        case LVAL_FUN: 
+        case LVAL_FUN:
            if (v->builtin) {
                x->builtin = v->builtin;
            } else {
@@ -1550,6 +1529,7 @@ lval* lval_copy(lval* v) {
                x->formals = lval_copy(v->formals);
                x->body = lval_copy(v->body);
            }
+           x->doc = v->doc ? strdup(v->doc) : NULL;
            break;
         case LVAL_FLOAT:
         case LVAL_BOOL:
@@ -1723,78 +1703,201 @@ void lenv_put(lenv* e, lval* k, lval* v) {
     // should v be deleted?
 }
 
-void lenv_add_builtin(lenv* e, char* name, lbuiltin func) {
+void lenv_add_builtin(lenv* e, char* name, lbuiltin func, char* doc) {
     lval* k = lval_sym(name);
-    lval* v = lval_builtin(func);
+    lval* v = lval_builtin(func, doc);
     lenv_put(e, k, v);
     lval_del(k); lval_del(v);
 }
 
 void lenv_add_builtins(lenv* e) {
     /* variable functions */
-    lenv_add_builtin(e, "\\", builtin_lambda);
-    lenv_add_builtin(e, "def", builtin_def);
-    lenv_add_builtin(e, "=", builtin_put);
+    lenv_add_builtin(e, "\\", builtin_lambda,
+        "Create a lambda function.\n"
+        "  Usage: (\\ {args} {body})\n"
+        "  Example: (def {add} (\\ {x y} {+ x y}))");
+    lenv_add_builtin(e, "def", builtin_def,
+        "Define a global variable.\n"
+        "  Usage: (def {name} value)\n"
+        "  Example: (def {x} 10)");
+    lenv_add_builtin(e, "=", builtin_put,
+        "Define a local variable.\n"
+        "  Usage: (= {name} value)\n"
+        "  Example: (= {x} 10)");
 
     /* list functions */
-    lenv_add_builtin(e, "list", builtin_list);
-    lenv_add_builtin(e, "head", builtin_head);
-    lenv_add_builtin(e, "tail", builtin_tail);
-    lenv_add_builtin(e, "eval", builtin_eval);
-    lenv_add_builtin(e, "join", builtin_join);
+    lenv_add_builtin(e, "list", builtin_list,
+        "Create a list from arguments, or convert string to list of chars.\n"
+        "  Usage: (list items...)\n"
+        "  Example: (list 1 2 3) -> {1 2 3}");
+    lenv_add_builtin(e, "head", builtin_head,
+        "Return first element of a list.\n"
+        "  Usage: (head {list})\n"
+        "  Example: (head {1 2 3}) -> {1}");
+    lenv_add_builtin(e, "tail", builtin_tail,
+        "Return list without first element.\n"
+        "  Usage: (tail {list})\n"
+        "  Example: (tail {1 2 3}) -> {2 3}");
+    lenv_add_builtin(e, "eval", builtin_eval,
+        "Evaluate a list as an expression.\n"
+        "  Usage: (eval {expr})\n"
+        "  Example: (eval {+ 1 2}) -> 3");
+    lenv_add_builtin(e, "join", builtin_join,
+        "Join multiple lists together.\n"
+        "  Usage: (join {list1} {list2} ...)\n"
+        "  Example: (join {1 2} {3 4}) -> {1 2 3 4}");
 
     /* maths */
-    lenv_add_builtin(e, "+", builtin_add);
-    lenv_add_builtin(e, "-", builtin_sub);
-    lenv_add_builtin(e, "*", builtin_mul);
-    lenv_add_builtin(e, "/", builtin_div);
+    lenv_add_builtin(e, "+", builtin_add,
+        "Add numbers.\n"
+        "  Usage: (+ num1 num2 ...)\n"
+        "  Example: (+ 1 2 3) -> 6");
+    lenv_add_builtin(e, "-", builtin_sub,
+        "Subtract numbers, or negate a single number.\n"
+        "  Usage: (- num1 num2 ...) or (- num)\n"
+        "  Example: (- 10 3) -> 7");
+    lenv_add_builtin(e, "*", builtin_mul,
+        "Multiply numbers.\n"
+        "  Usage: (* num1 num2 ...)\n"
+        "  Example: (* 2 3 4) -> 24");
+    lenv_add_builtin(e, "/", builtin_div,
+        "Divide numbers.\n"
+        "  Usage: (/ num1 num2 ...)\n"
+        "  Example: (/ 10 2) -> 5");
 
     /* conditionals */
-    lenv_add_builtin(e, "eq", builtin_eq);
-    lenv_add_builtin(e, "ne", builtin_ne);
-    lenv_add_builtin(e, "lt", builtin_lt);
-    lenv_add_builtin(e, "gt", builtin_gt);
-    lenv_add_builtin(e, "le", builtin_le);
-    lenv_add_builtin(e, "ge", builtin_ge);
-    lenv_add_builtin(e, "if", builtin_if);
-    lenv_add_builtin(e, "not", builtin_not);
-    lenv_add_builtin(e, "and", builtin_and);
-    lenv_add_builtin(e, "or", builtin_or);
+    lenv_add_builtin(e, "eq", builtin_eq,
+        "Check equality of two values.\n"
+        "  Usage: (eq val1 val2)\n"
+        "  Example: (eq 1 1) -> true");
+    lenv_add_builtin(e, "ne", builtin_ne,
+        "Check inequality of two values.\n"
+        "  Usage: (ne val1 val2)\n"
+        "  Example: (ne 1 2) -> true");
+    lenv_add_builtin(e, "lt", builtin_lt,
+        "Check if first number is less than second.\n"
+        "  Usage: (lt num1 num2)\n"
+        "  Example: (lt 1 2) -> true");
+    lenv_add_builtin(e, "gt", builtin_gt,
+        "Check if first number is greater than second.\n"
+        "  Usage: (gt num1 num2)\n"
+        "  Example: (gt 2 1) -> true");
+    lenv_add_builtin(e, "le", builtin_le,
+        "Check if first number is less than or equal to second.\n"
+        "  Usage: (le num1 num2)\n"
+        "  Example: (le 1 1) -> true");
+    lenv_add_builtin(e, "ge", builtin_ge,
+        "Check if first number is greater than or equal to second.\n"
+        "  Usage: (ge num1 num2)\n"
+        "  Example: (ge 2 1) -> true");
+    lenv_add_builtin(e, "if", builtin_if,
+        "Conditional expression.\n"
+        "  Usage: (if condition {true-expr} {false-expr})\n"
+        "  Example: (if (gt x 0) {\"positive\"} {\"non-positive\"})");
+    lenv_add_builtin(e, "not", builtin_not,
+        "Logical negation.\n"
+        "  Usage: (not bool)\n"
+        "  Example: (not true) -> false");
+    lenv_add_builtin(e, "and", builtin_and,
+        "Logical AND of all arguments.\n"
+        "  Usage: (and bool1 bool2 ...)\n"
+        "  Example: (and true true) -> true");
+    lenv_add_builtin(e, "or", builtin_or,
+        "Logical OR of all arguments.\n"
+        "  Usage: (or bool1 bool2 ...)\n"
+        "  Example: (or false true) -> true");
 
     // strings
-    lenv_add_builtin(e, "str", builtin_str);
-    lenv_add_builtin(e, "strlen", builtin_strlen);
+    lenv_add_builtin(e, "str", builtin_str,
+        "Convert values to string and concatenate.\n"
+        "  Usage: (str val1 val2 ...)\n"
+        "  Example: (str \"x=\" 42) -> \"x=42\"");
+    lenv_add_builtin(e, "strlen", builtin_strlen,
+        "Get length of a string.\n"
+        "  Usage: (strlen string)\n"
+        "  Example: (strlen \"hello\") -> 5");
 
     // type casting
-    lenv_add_builtin(e, "int", builtin_int);
-    lenv_add_builtin(e, "float", builtin_float_cast);
-    lenv_add_builtin(e, "bool", builtin_bool_cast);
+    lenv_add_builtin(e, "int", builtin_int,
+        "Convert value to integer.\n"
+        "  Usage: (int value)\n"
+        "  Example: (int 3.7) -> 3");
+    lenv_add_builtin(e, "float", builtin_float_cast,
+        "Convert value to float.\n"
+        "  Usage: (float value)\n"
+        "  Example: (float 3) -> 3.0");
+    lenv_add_builtin(e, "bool", builtin_bool_cast,
+        "Convert value to boolean.\n"
+        "  Usage: (bool value)\n"
+        "  Example: (bool 1) -> true");
 
     // load and print
-    lenv_add_builtin(e, "load", builtin_load);
-    lenv_add_builtin(e, "print", builtin_print);
-    lenv_add_builtin(e, "error", builtin_error);
+    lenv_add_builtin(e, "load", builtin_load,
+        "Load and execute a lispy file.\n"
+        "  Usage: (load \"filename\")\n"
+        "  Example: (load \"stdlib.lspy\")");
+    lenv_add_builtin(e, "print", builtin_print,
+        "Print values to stdout.\n"
+        "  Usage: (print val1 val2 ...)\n"
+        "  Example: (print \"Hello\" \"World\")");
+    lenv_add_builtin(e, "error", builtin_error,
+        "Create an error with a message.\n"
+        "  Usage: (error \"message\")\n"
+        "  Example: (error \"Something went wrong\")");
 
     // help
-    lenv_add_builtin(e, "help", builtin_help);
+    lenv_add_builtin(e, "help", builtin_help,
+        "Show help for builtins.\n"
+        "  Usage: (help) or (help 'name)\n"
+        "  Example: (help 'print)");
 
     // user-defined types
-    lenv_add_builtin(e, "deftype", builtin_deftype);
-    lenv_add_builtin(e, "new", builtin_new);
-    lenv_add_builtin(e, "get", builtin_get);
-    lenv_add_builtin(e, "set", builtin_set);
+    lenv_add_builtin(e, "deftype", builtin_deftype,
+        "Define a user-defined type.\n"
+        "  Usage: (deftype {name field1 field2 ...})\n"
+        "  Example: (deftype {point x y})");
+    lenv_add_builtin(e, "new", builtin_new,
+        "Create an instance of a user-defined type.\n"
+        "  Usage: (new typename val1 val2 ...)\n"
+        "  Example: (new point 3 4)");
+    lenv_add_builtin(e, "get", builtin_get,
+        "Get a field value from a type instance.\n"
+        "  Usage: (get instance 'field)\n"
+        "  Example: (get p 'x)");
+    lenv_add_builtin(e, "set", builtin_set,
+        "Set a field value in a type instance.\n"
+        "  Usage: (set instance 'field value)\n"
+        "  Example: (set p 'x 10)");
 
     // fractions
-    lenv_add_builtin(e, "frac", builtin_frac);
-    lenv_add_builtin(e, "numer", builtin_numer);
-    lenv_add_builtin(e, "denom", builtin_denom);
+    lenv_add_builtin(e, "frac", builtin_frac,
+        "Create a fraction (rational number).\n"
+        "  Usage: (frac numerator denominator)\n"
+        "  Example: (frac 1 2) -> 1/2");
+    lenv_add_builtin(e, "numer", builtin_numer,
+        "Get the numerator of a fraction.\n"
+        "  Usage: (numer fraction)\n"
+        "  Example: (numer (frac 3 4)) -> 3");
+    lenv_add_builtin(e, "denom", builtin_denom,
+        "Get the denominator of a fraction.\n"
+        "  Usage: (denom fraction)\n"
+        "  Example: (denom (frac 3 4)) -> 4");
 
     // debugging
-    lenv_add_builtin(e, "debug", builtin_debug);
+    lenv_add_builtin(e, "debug", builtin_debug,
+        "Evaluate expression with verbose debug output.\n"
+        "  Usage: (debug {expr})\n"
+        "  Example: (debug {+ 1 2})");
 
     // threads
-    lenv_add_builtin(e, "spawn", builtin_spawn);
-    lenv_add_builtin(e, "wait", builtin_wait);
+    lenv_add_builtin(e, "spawn", builtin_spawn,
+        "Spawn a new thread to evaluate an expression.\n"
+        "  Usage: (spawn {expr})\n"
+        "  Example: (def {t} (spawn {+ 1 2}))");
+    lenv_add_builtin(e, "wait", builtin_wait,
+        "Wait for a thread to complete and get its result.\n"
+        "  Usage: (wait thread)\n"
+        "  Example: (wait t)");
 }
 
 lenv* lenv_copy(lenv* e) {
@@ -1859,6 +1962,7 @@ lval* lval_lambda(lval* formals, lval* body) {
     count_inc(v->type);
 
     v->builtin = NULL;
+    v->doc = NULL;
 
     // set up new environment for function (scope)
     v->env = lenv_new();
