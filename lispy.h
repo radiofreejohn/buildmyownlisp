@@ -161,6 +161,10 @@ int  lenv_hash_copy_kv(char*, lval*, hash_table*);
 /* enum -> name */
 char* ltype_name(int t);
 
+/* global counters (for debugging) */
+extern int counter;
+extern int debug;
+
 /* lambda stuff */
 lval* lval_lambda(lval*, lval*);
 

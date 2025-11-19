@@ -91,6 +91,7 @@ void count_dec(int ltype) {
     }
 }
 
+#ifndef LISPY_TEST
 int main(int argc, char **argv) {
     counter = 0;
     debug = 0;
@@ -196,6 +197,7 @@ int main(int argc, char **argv) {
 
 	return 0;
 }
+#endif /* LISPY_TEST */
 
 lval* lval_eq(lval* x, lval* y) {
     if (x->type != y->type) { return lval_bool(0); }
