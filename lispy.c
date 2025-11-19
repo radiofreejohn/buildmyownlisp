@@ -349,13 +349,18 @@ lval* builtin_load(lenv* e, lval* a) {
 }
 
 lval* builtin_print(lenv* e, lval* a) {
-    for (int i = 0; i < a->count; i++) {
-        if ((((lval*)list_index(a->cell, i)))->type == LVAL_STR) {
-            printf("%s", (((lval*)list_index(a->cell, i)))->str);
+    int first = 1;
+    list_start(a->cell);
+    while (list_end(a->cell)) {
+        lval* v = list_curr(a->cell);
+        if (v->type == LVAL_STR) {
+            printf("%s", v->str);
         } else {
-            lval_print((lval*)list_index(a->cell, i)); 
-            if (i != a->count-1) { putchar(' '); }
+            if (!first) { putchar(' '); }
+            lval_print(v);
         }
+        first = 0;
+        list_iter(a->cell);
     }
 
     // putchar('\n');
@@ -482,21 +487,23 @@ lval* lval_read(mpc_ast_t* t) {
 lval* lval_eval_sexpr(lenv* e, lval* v) {
 
     /* Evaluate the children */
-    for (int i = 0; i < v->count; i++) {
-        // TODO: is this OK?
-        lval* l = (lval*)list_index(v->cell, i);
-        list_replace(v->cell, i, lval_eval(e, l));
-        // v->cell[i] = lval_eval(e, v->cell[i]);
+    list_start(v->cell);
+    while (list_end(v->cell)) {
+        lval* l = list_curr(v->cell);
+        list_replace_curr(v->cell, lval_eval(e, l));
+        list_iter(v->cell);
     }
 
     /* Error checking */
-    // v->count is bad here
-    for (int i = 0; i < v->count; i++) {
-        // list index can return an lval err if it's out of bounds
-        // so this isn't great
-        if (((lval*)list_index(v->cell, i))->type == LVAL_ERR) {
-            return lval_take(v, i);
+    int err_index = 0;
+    list_start(v->cell);
+    while (list_end(v->cell)) {
+        lval* l = list_curr(v->cell);
+        if (l->type == LVAL_ERR) {
+            return lval_take(v, err_index);
         }
+        err_index++;
+        list_iter(v->cell);
     }
 
     /* Empty expression */
@@ -557,20 +564,23 @@ lval* lval_take(lval* v, int i) {
 lval* builtin_str_op(lenv* e, lval* a, char* op) {
     // convert all arguments to strings
     // this is wrong - but for now I'll keep it
-    // may not always want to convert arguments, 
+    // may not always want to convert arguments,
     // for example when slicing a single string
     // making an assumption that these operate
     // on an arbitrary number of variable
     // arguments that all must be strings
-    for (int i = 0; i < a->count; i++) {
-        if (((lval*)list_index(a->cell, i))->type != LVAL_STR) {
-            lval* z = lval_to_str((lval*)list_index(a->cell, i));
+    list_start(a->cell);
+    while (list_end(a->cell)) {
+        lval* v = list_curr(a->cell);
+        if (v->type != LVAL_STR) {
+            lval* z = lval_to_str(v);
             if (z->type == LVAL_ERR) {
                 lval_del(a);
                 return z;
             }
-            list_replace(a->cell, i, z);
+            list_replace_curr(a->cell, z);
         }
+        list_iter(a->cell);
     }
     lval* x = lval_pop(a, 0);
 
@@ -592,15 +602,18 @@ lval* builtin_str_op(lenv* e, lval* a, char* op) {
 lval* builtin_op(lenv* e, lval* a, char* op) {
     /* Ensure all args are numbers */
     int hasfloat = 0;
-    for (int i = 0; i < a->count; i++) {
-        if (((lval*)list_index(a->cell, i))->type == LVAL_FLOAT) {
+    list_start(a->cell);
+    while (list_end(a->cell)) {
+        lval* v = list_curr(a->cell);
+        if (v->type == LVAL_FLOAT) {
             hasfloat = 1;
         }
-        if ((((lval*)list_index(a->cell, i))->type != LVAL_LONG) && (((lval*)list_index(a->cell, i))->type != LVAL_FLOAT)) {
-            int type = ((lval*)list_index(a->cell, i))->type;
+        if (v->type != LVAL_LONG && v->type != LVAL_FLOAT) {
+            int type = v->type;
             lval_del(a);
             return lval_err("builtin_op: Incorrect type. Got %s, expected a number.", ltype_name(type));
         }
+        list_iter(a->cell);
     }
 
     /* Pop the first element */
@@ -708,12 +721,15 @@ lval* builtin_tail(lenv* e, lval* a) {
 lval* builtin_list(lenv* e, lval* a) {
     a->type = LVAL_QEXPR;
 
-    if (a->count == 1 && ((lval*)list_index(a->cell, 0))->type == LVAL_STR) {
+    lval* first = list_start(a->cell);
+    if (a->count == 1 && first != NULL && first->type == LVAL_STR) {
         lval* z = lval_qexpr();
-        for (int i = 0; i < strlen(((lval*)list_index(a->cell, 0))->str); i++) {
+        char* str = first->str;
+        int len = strlen(str);
+        for (int i = 0; i < len; i++) {
             int end = 1;
             char* c = malloc(3);
-            c[0] = ((lval*)list_index(a->cell, 0))->str[i];
+            c[0] = str[i];
             switch (c[0]) {
                 case '\a':
                     c[0] = '\\';
@@ -775,8 +791,15 @@ lval* builtin_list(lenv* e, lval* a) {
 
 lval* builtin_if(lenv* e, lval* a) {
     LASSERT(a, (a->count == 3), "Function 'if' passed incorrect number of arguments. Got %d, expected %d.", a->count, 3);
-    for (int i = 1; i < a->count; i++) {
-        LASSERT(a, (((lval*)list_index(a->cell, i))->type == LVAL_QEXPR), "Expected Q-expression as an argument, but got %s", ltype_name(((lval*)list_index(a->cell, i))->type));
+    int i = 0;
+    list_start(a->cell);
+    while (list_end(a->cell)) {
+        lval* v = list_curr(a->cell);
+        if (i >= 1) {
+            LASSERT(a, (v->type == LVAL_QEXPR), "Expected Q-expression as an argument, but got %s", ltype_name(v->type));
+        }
+        i++;
+        list_iter(a->cell);
     }
     // type check the arguments later... derp
     lval* condition = lval_pop(a, 0);
@@ -822,8 +845,11 @@ lval* builtin_eval(lenv* e, lval* a) {
 }
 
 lval* builtin_join(lenv* e, lval* a) {
-    for (int i = 0; i < a->count; i++) {
-        LASSERT(a, (((lval*)list_index(a->cell, i))->type == LVAL_QEXPR), "Function 'join' passed incorrect type. Got %s, expected %s", ltype_name(((lval*)list_index(a->cell, i))->type), ltype_name(LVAL_QEXPR));
+    list_start(a->cell);
+    while (list_end(a->cell)) {
+        lval* v = list_curr(a->cell);
+        LASSERT(a, (v->type == LVAL_QEXPR), "Function 'join' passed incorrect type. Got %s, expected %s", ltype_name(v->type), ltype_name(LVAL_QEXPR));
+        list_iter(a->cell);
     }
 
     lval* x = lval_pop(a, 0);
@@ -843,11 +869,14 @@ lval* builtin_lambda(lenv* e, lval* a) {
     LASSERT_TYPE("\\", a, 1, LVAL_QEXPR);
 
     // check first Q expression contains only symbols
-    for (int i = 0; i < (((lval*)list_index(a->cell, 0)))->count; i++) {
-        // whoa, this is not cool
-        LASSERT(a, (((lval*)list_index(((lval*)list_index(a->cell, 0))->cell, i))->type == LVAL_SYM),
+    lval* formals_check = (lval*)list_index(a->cell, 0);
+    list_start(formals_check->cell);
+    while (list_end(formals_check->cell)) {
+        lval* v = list_curr(formals_check->cell);
+        LASSERT(a, (v->type == LVAL_SYM),
                 "Cannot define non-symbol. Got %s, expected %s.",
-                ltype_name(((lval*)list_index(((lval*)list_index(a->cell, 0))->cell, i))->type), ltype_name(LVAL_SYM));
+                ltype_name(v->type), ltype_name(LVAL_SYM));
+        list_iter(formals_check->cell);
     }
 
     // pop first two arguments and pass them to lval lambda
@@ -861,20 +890,30 @@ lval* builtin_lambda(lenv* e, lval* a) {
 lval* builtin_var(lenv* e, lval* a, char* func) {
     LASSERT_TYPE(func, a, 0, LVAL_QEXPR);
     lval* syms = (lval*)list_index(a->cell, 0);
-    for (int i = 0; i < syms->count; i++) {
-        LASSERT(a, (((lval*)list_index(syms->cell, i))->type == LVAL_SYM),
+    list_start(syms->cell);
+    while (list_end(syms->cell)) {
+        lval* v = list_curr(syms->cell);
+        LASSERT(a, (v->type == LVAL_SYM),
                 "Function '%s' cannot define non-symbol. Got %s, expected %s.",
-                func, ltype_name(((lval*)list_index(syms->cell, i))->type), ltype_name(LVAL_SYM));
+                func, ltype_name(v->type), ltype_name(LVAL_SYM));
+        list_iter(syms->cell);
     }
 
     LASSERT(a, (syms->count == a->count-1),
             "Function '%s' passed too many arguments for symbols. Got %d, expected %d.",
             func, syms->count, a->count-1);
 
-    for (int i = 0; i < syms->count; i++) {
+    /* Iterate over symbols and values together using index for values offset */
+    list_start(syms->cell);
+    int i = 0;
+    while (list_end(syms->cell)) {
+        lval* sym = list_curr(syms->cell);
+        lval* val = (lval*)list_index(a->cell, i + 1);
         /* if def define in global scope. if put define in local scope */
-        if (strcmp(func, "def") == 0) { lenv_def(e, (lval*)list_index(syms->cell, i), (lval*)list_index(a->cell, i+1)); }
-        if (strcmp(func, "="  ) == 0) { lenv_put(e, (lval*)list_index(syms->cell, i), (lval*)list_index(a->cell, i+1)); }
+        if (strcmp(func, "def") == 0) { lenv_def(e, sym, val); }
+        if (strcmp(func, "="  ) == 0) { lenv_put(e, sym, val); }
+        list_iter(syms->cell);
+        i++;
     }
     
     lval_del(a);
@@ -924,9 +963,12 @@ lval* lval_copy(lval* v) {
         case LVAL_SEXPR:
         case LVAL_QEXPR:
           x->count = v->count;
-          x->cell = list_init();//  malloc(sizeof(lval*) * x->count);
-          for (int i = 0; i < x->count; i++) {
-              list_push(x->cell, lval_copy((lval*)list_index(v->cell, i)));
+          x->cell = list_init();
+          list_start(v->cell);
+          while (list_end(v->cell)) {
+              lval* elem = list_curr(v->cell);
+              list_push(x->cell, lval_copy(elem));
+              list_iter(v->cell);
           }
           break;
     }
@@ -937,14 +979,18 @@ lval* lval_copy(lval* v) {
 /* print sexpr */
 void lval_expr_print(lval* v, char open, char close) {
     putchar(open);
-    for (int i = 0; i < v->count; i++) {
-        /* print value contained within */
-        lval_print((lval*)list_index(v->cell, i));
-
-        /* don't print trailing space if last element */
-        if (i != (v->count-1)) {
+    int first = 1;
+    list_start(v->cell);
+    while (list_end(v->cell)) {
+        lval* elem = list_curr(v->cell);
+        /* print space before all but first element */
+        if (!first) {
             putchar(' ');
         }
+        /* print value contained within */
+        lval_print(elem);
+        first = 0;
+        list_iter(v->cell);
     }
     putchar(close);
 }
@@ -1262,24 +1308,38 @@ lval* bool_negate_expr(lval* l) {
 }
 
 lval* builtin_and(lenv* e, lval* l) {
-    for (int i = 0; i < l->count; i++) {
-        LASSERT_TYPE("and", l, i, LVAL_BOOL);
-        if (((lval*)list_index(l->cell, i))->num == 0) {
+    int i = 0;
+    list_start(l->cell);
+    while (list_end(l->cell)) {
+        lval* v = list_curr(l->cell);
+        LASSERT(l, (v->type == LVAL_BOOL),
+                "Function '%s' passed incorrect type for argument %d. Got %s, expected %s.",
+                "and", i, ltype_name(v->type), ltype_name(LVAL_BOOL));
+        if (v->num == 0) {
             lval_del(l);
             return lval_bool(0);
         }
+        i++;
+        list_iter(l->cell);
     }
     lval_del(l);
     return lval_bool(1);
 }
 
 lval* builtin_or(lenv* e, lval* l) {
-    for (int i = 0; i < l->count; i++) {
-        LASSERT_TYPE("or", l, i, LVAL_BOOL);
-        if (((lval*)list_index(l->cell, i))->num == 1) {
+    int i = 0;
+    list_start(l->cell);
+    while (list_end(l->cell)) {
+        lval* v = list_curr(l->cell);
+        LASSERT(l, (v->type == LVAL_BOOL),
+                "Function '%s' passed incorrect type for argument %d. Got %s, expected %s.",
+                "or", i, ltype_name(v->type), ltype_name(LVAL_BOOL));
+        if (v->num == 1) {
             lval_del(l);
             return lval_bool(1);
         }
+        i++;
+        list_iter(l->cell);
     }
     lval_del(l);
     return lval_bool(0);
