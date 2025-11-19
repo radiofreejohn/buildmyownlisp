@@ -133,6 +133,9 @@ lval* builtin_load(lenv* e, lval* a);
 lval* builtin_print(lenv* e, lval* a);
 lval* builtin_error(lenv* e, lval* a);
 
+// help
+lval* builtin_help(lenv* e, lval* a);
+
 // debugging
 lval* builtin_debug(lenv* e, lval* a);
 lval* lval_eval_debug(lenv* e, lval* v, int depth);

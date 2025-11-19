@@ -13,6 +13,75 @@
 
 #include <editline/readline.h>
 
+/* Help system - maps builtin names to their help strings */
+typedef struct {
+    char* name;
+    char* help;
+} builtin_help_entry;
+
+static builtin_help_entry builtin_help_entries[] = {
+    /* Variable functions */
+    {"\\", "Create a lambda function.\n  Usage: (\\ {args} {body})\n  Example: (def {add} (\\ {x y} {+ x y}))"},
+    {"def", "Define a global variable.\n  Usage: (def {name} value)\n  Example: (def {x} 10)"},
+    {"=", "Define a local variable.\n  Usage: (= {name} value)\n  Example: (= {x} 10)"},
+
+    /* List functions */
+    {"list", "Create a list from arguments, or convert string to list of chars.\n  Usage: (list items...)\n  Example: (list 1 2 3) -> {1 2 3}"},
+    {"head", "Return first element of a list.\n  Usage: (head {list})\n  Example: (head {1 2 3}) -> {1}"},
+    {"tail", "Return list without first element.\n  Usage: (tail {list})\n  Example: (tail {1 2 3}) -> {2 3}"},
+    {"eval", "Evaluate a list as an expression.\n  Usage: (eval {expr})\n  Example: (eval {+ 1 2}) -> 3"},
+    {"join", "Join multiple lists together.\n  Usage: (join {list1} {list2} ...)\n  Example: (join {1 2} {3 4}) -> {1 2 3 4}"},
+
+    /* Math functions */
+    {"+", "Add numbers.\n  Usage: (+ num1 num2 ...)\n  Example: (+ 1 2 3) -> 6"},
+    {"-", "Subtract numbers, or negate a single number.\n  Usage: (- num1 num2 ...) or (- num)\n  Example: (- 10 3) -> 7"},
+    {"*", "Multiply numbers.\n  Usage: (* num1 num2 ...)\n  Example: (* 2 3 4) -> 24"},
+    {"/", "Divide numbers.\n  Usage: (/ num1 num2 ...)\n  Example: (/ 10 2) -> 5"},
+
+    /* Comparison functions */
+    {"eq", "Check equality of two values.\n  Usage: (eq val1 val2)\n  Example: (eq 1 1) -> true"},
+    {"ne", "Check inequality of two values.\n  Usage: (ne val1 val2)\n  Example: (ne 1 2) -> true"},
+    {"lt", "Check if first number is less than second.\n  Usage: (lt num1 num2)\n  Example: (lt 1 2) -> true"},
+    {"gt", "Check if first number is greater than second.\n  Usage: (gt num1 num2)\n  Example: (gt 2 1) -> true"},
+    {"le", "Check if first number is less than or equal to second.\n  Usage: (le num1 num2)\n  Example: (le 1 1) -> true"},
+    {"ge", "Check if first number is greater than or equal to second.\n  Usage: (ge num1 num2)\n  Example: (ge 2 1) -> true"},
+
+    /* Logical functions */
+    {"if", "Conditional expression.\n  Usage: (if condition {true-expr} {false-expr})\n  Example: (if (gt x 0) {\"positive\"} {\"non-positive\"})"},
+    {"not", "Logical negation.\n  Usage: (not bool)\n  Example: (not true) -> false"},
+    {"and", "Logical AND of all arguments.\n  Usage: (and bool1 bool2 ...)\n  Example: (and true true) -> true"},
+    {"or", "Logical OR of all arguments.\n  Usage: (or bool1 bool2 ...)\n  Example: (or false true) -> true"},
+
+    /* String functions */
+    {"str", "Convert values to string and concatenate.\n  Usage: (str val1 val2 ...)\n  Example: (str \"x=\" 42) -> \"x=42\""},
+    {"strlen", "Get length of a string.\n  Usage: (strlen string)\n  Example: (strlen \"hello\") -> 5"},
+
+    /* Type conversion */
+    {"int", "Convert value to integer.\n  Usage: (int value)\n  Example: (int 3.7) -> 3"},
+    {"float", "Convert value to float.\n  Usage: (float value)\n  Example: (float 3) -> 3.0"},
+    {"bool", "Convert value to boolean.\n  Usage: (bool value)\n  Example: (bool 1) -> true"},
+
+    /* I/O functions */
+    {"load", "Load and execute a lispy file.\n  Usage: (load \"filename\")\n  Example: (load \"stdlib.lspy\")"},
+    {"print", "Print values to stdout.\n  Usage: (print val1 val2 ...)\n  Example: (print \"Hello\" \"World\")"},
+    {"error", "Create an error with a message.\n  Usage: (error \"message\")\n  Example: (error \"Something went wrong\")"},
+
+    /* Help */
+    {"help", "Show help for builtins.\n  Usage: (help) or (help \"name\")\n  Example: (help \"print\")"},
+
+    {NULL, NULL}  /* sentinel */
+};
+
+/* Get help string for a builtin by name */
+char* get_builtin_help(char* name) {
+    for (int i = 0; builtin_help_entries[i].name != NULL; i++) {
+        if (strcmp(builtin_help_entries[i].name, name) == 0) {
+            return builtin_help_entries[i].help;
+        }
+    }
+    return NULL;
+}
+
 /* Thread support structures */
 typedef struct {
     pthread_t thread;
@@ -321,6 +390,13 @@ int main(int argc, char **argv) {
                 free(input);
                 continue;
             }
+            if (strcmp(input, "help") == 0) {
+                lval* args = lval_sexpr();
+                lval* result = builtin_help(e, args);
+                if (result->type == LVAL_ERR) { lval_println(result); }
+                lval_del(result);
+                continue;
+            }
 
             /* Attempt to Parse the user Input */
             mpc_result_t r;
@@ -608,6 +684,57 @@ lval* builtin_error(lenv* e, lval* a) {
 
     lval_del(a);
     return err;
+}
+
+lval* builtin_help(lenv* e, lval* a) {
+    if (a->count == 0) {
+        /* No arguments - list all builtins with short descriptions */
+        printf("Available builtins:\n\n");
+        for (int i = 0; builtin_help_entries[i].name != NULL; i++) {
+            /* Print name and first line of help (up to newline) */
+            char* help = builtin_help_entries[i].help;
+            char* newline = strchr(help, '\n');
+            if (newline) {
+                int len = newline - help;
+                printf("  %-8s %.*s\n", builtin_help_entries[i].name, len, help);
+            } else {
+                printf("  %-8s %s\n", builtin_help_entries[i].name, help);
+            }
+        }
+        printf("\nUse (help \"name\") for detailed help on a specific builtin.\n");
+        lval_del(a);
+        return lval_sexpr();
+    } else if (a->count == 1) {
+        /* One argument - show detailed help for that builtin */
+        lval* arg = (lval*)list_index(a->cell, 0);
+        char* name;
+
+        if (arg->type == LVAL_STR) {
+            name = arg->str;
+        } else if (arg->type == LVAL_SYM) {
+            name = arg->str;
+        } else {
+            lval* err = lval_err("Function 'help' requires a string argument. Got %s.\n  Usage: (help \"print\")", ltype_name(arg->type));
+            lval_del(a);
+            return err;
+        }
+
+        char* help = get_builtin_help(name);
+
+        if (help) {
+            printf("%s\n", help);
+            lval_del(a);
+            return lval_sexpr();
+        } else {
+            lval* err = lval_err("No help available for '%s'", name);
+            lval_del(a);
+            return err;
+        }
+    } else {
+        lval* err = lval_err("Function 'help' passed too many arguments. Got %d, expected 0 or 1.", a->count);
+        lval_del(a);
+        return err;
+    }
 }
 
 /* Helper to print indentation */
@@ -1647,6 +1774,9 @@ void lenv_add_builtins(lenv* e) {
     lenv_add_builtin(e, "load", builtin_load);
     lenv_add_builtin(e, "print", builtin_print);
     lenv_add_builtin(e, "error", builtin_error);
+
+    // help
+    lenv_add_builtin(e, "help", builtin_help);
 
     // user-defined types
     lenv_add_builtin(e, "deftype", builtin_deftype);
