@@ -268,6 +268,57 @@ void suite_user_types(void) {
     pt_add_test(test_get_field, "Test Get Field", "User Types");
 }
 
+/* Test suite for fractions */
+void test_frac_create(void) {
+    lenv* e = lenv_new();
+    lenv_add_builtins(e);
+
+    lval* result = eval_string(e, "(frac 3 4)");
+    PT_ASSERT(result->type == LVAL_FRAC);
+    PT_ASSERT(result->numer == 3);
+    PT_ASSERT(result->denom == 4);
+    lval_del(result);
+
+    lenv_del(e);
+}
+
+void test_frac_simplify(void) {
+    lenv* e = lenv_new();
+    lenv_add_builtins(e);
+
+    /* 6/8 should simplify to 3/4 */
+    lval* result = eval_string(e, "(frac 6 8)");
+    PT_ASSERT(result->type == LVAL_FRAC);
+    PT_ASSERT(result->numer == 3);
+    PT_ASSERT(result->denom == 4);
+    lval_del(result);
+
+    lenv_del(e);
+}
+
+void test_frac_numer_denom(void) {
+    lenv* e = lenv_new();
+    lenv_add_builtins(e);
+
+    lval* result = eval_string(e, "(numer (frac 3 4))");
+    PT_ASSERT(result->type == LVAL_LONG);
+    PT_ASSERT((long)result->num == 3);
+    lval_del(result);
+
+    result = eval_string(e, "(denom (frac 3 4))");
+    PT_ASSERT(result->type == LVAL_LONG);
+    PT_ASSERT((long)result->num == 4);
+    lval_del(result);
+
+    lenv_del(e);
+}
+
+void suite_fractions(void) {
+    pt_add_test(test_frac_create, "Test Frac Create", "Fractions");
+    pt_add_test(test_frac_simplify, "Test Frac Simplify", "Fractions");
+    pt_add_test(test_frac_numer_denom, "Test Frac Numer/Denom", "Fractions");
+}
+
 /* Initialize parsers - must be called before tests */
 void init_parsers(void) {
     Number  = mpc_new("number");
@@ -307,6 +358,7 @@ int main(int argc, char** argv) {
     pt_add_suite(suite_conditionals);
     pt_add_suite(suite_casting);
     pt_add_suite(suite_user_types);
+    pt_add_suite(suite_fractions);
 
     int result = pt_run();
 

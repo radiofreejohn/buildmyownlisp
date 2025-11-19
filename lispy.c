@@ -234,6 +234,9 @@ lval* lval_eq(lval* x, lval* y) {
            if (strcmp(x->type_name, y->type_name) != 0) { return lval_bool(0); }
            return lval_eq(x->fields, y->fields);
            break;
+        case LVAL_FRAC:
+           return lval_bool(x->numer == y->numer && x->denom == y->denom);
+           break;
     }
     return lval_bool(0);
 }
@@ -317,6 +320,7 @@ void lval_del(lval* v) {
         case LVAL_FLOAT: break;
         case LVAL_BOOL: break;
         case LVAL_LONG: break;
+        case LVAL_FRAC: break;
         case LVAL_FUN:
             if (!v->builtin) {
                    lenv_del(v->env);
@@ -1127,6 +1131,10 @@ lval* lval_copy(lval* v) {
         case LVAL_FLOAT:
         case LVAL_BOOL:
         case LVAL_LONG: x->num = v->num; break;
+        case LVAL_FRAC:
+           x->numer = v->numer;
+           x->denom = v->denom;
+           break;
 
         /* copy strings using strdup */
         case LVAL_STR:
@@ -1191,6 +1199,7 @@ void lval_print(lval* v) {
         case LVAL_STR:   lval_print_str(v); break;
         case LVAL_LONG:  printf("%li", (long) v->num); break;
         case LVAL_FLOAT: printf("%g", v->num); break;
+        case LVAL_FRAC:  printf("%ld/%ld", v->numer, v->denom); break;
         case LVAL_BOOL:  printf("%s", (int) v->num ? "true" : "false"); break;
         case LVAL_ERR:   printf("Error: %s", v->str); break;
         case LVAL_SYM:   printf("%s", v->str); break;
@@ -1348,6 +1357,11 @@ void lenv_add_builtins(lenv* e) {
     lenv_add_builtin(e, "new", builtin_new);
     lenv_add_builtin(e, "get", builtin_get);
     lenv_add_builtin(e, "set", builtin_set);
+
+    // fractions
+    lenv_add_builtin(e, "frac", builtin_frac);
+    lenv_add_builtin(e, "numer", builtin_numer);
+    lenv_add_builtin(e, "denom", builtin_denom);
 }
 
 lenv* lenv_copy(lenv* e) {
@@ -1401,6 +1415,7 @@ char *ltype_name(int t) {
         case LVAL_QEXPR: return "Q-Expression";
         case LVAL_UTYPE: return "User-Type";
         case LVAL_UVAL: return "User-Value";
+        case LVAL_FRAC: return "Fraction";
         default: return "Unknown";
     }
 }
@@ -1816,4 +1831,106 @@ lval* builtin_set(lenv* e, lval* a) {
     lval_del(utype);
     lval_del(a);
     return result;
+}
+
+/* Fraction implementation */
+
+/* Greatest common divisor using Euclidean algorithm */
+long gcd(long a, long b) {
+    if (a < 0) a = -a;
+    if (b < 0) b = -b;
+    while (b != 0) {
+        long t = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
+/* Create a new fraction, automatically simplified */
+lval* lval_frac(long numer, long denom) {
+    if (denom == 0) {
+        return lval_err("Division by zero in fraction");
+    }
+
+    /* Normalize sign to numerator */
+    if (denom < 0) {
+        numer = -numer;
+        denom = -denom;
+    }
+
+    /* Simplify using GCD */
+    long g = gcd(numer, denom);
+    numer /= g;
+    denom /= g;
+
+    /* If denominator is 1, return as integer */
+    if (denom == 1) {
+        return lval_long(numer);
+    }
+
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_FRAC;
+    v->numer = numer;
+    v->denom = denom;
+    count_inc(v->type);
+    return v;
+}
+
+/* Create fraction: (frac 1 2) -> 1/2 */
+lval* builtin_frac(lenv* e, lval* a) {
+    LASSERT_NUM("frac", a, 2);
+    LASSERT_TYPE("frac", a, 0, LVAL_LONG);
+    LASSERT_TYPE("frac", a, 1, LVAL_LONG);
+
+    lval* numer = lval_pop(a, 0);
+    lval* denom = lval_pop(a, 0);
+
+    lval* result = lval_frac((long)numer->num, (long)denom->num);
+
+    lval_del(numer);
+    lval_del(denom);
+    lval_del(a);
+    return result;
+}
+
+/* Get numerator: (numer (frac 3 4)) -> 3 */
+lval* builtin_numer(lenv* e, lval* a) {
+    LASSERT_NUM("numer", a, 1);
+
+    lval* v = lval_pop(a, 0);
+    lval_del(a);
+
+    if (v->type == LVAL_FRAC) {
+        long n = v->numer;
+        lval_del(v);
+        return lval_long(n);
+    } else if (v->type == LVAL_LONG) {
+        return v;
+    } else {
+        lval* err = lval_err("Function 'numer' requires Fraction or Integer, got %s", ltype_name(v->type));
+        lval_del(v);
+        return err;
+    }
+}
+
+/* Get denominator: (denom (frac 3 4)) -> 4 */
+lval* builtin_denom(lenv* e, lval* a) {
+    LASSERT_NUM("denom", a, 1);
+
+    lval* v = lval_pop(a, 0);
+    lval_del(a);
+
+    if (v->type == LVAL_FRAC) {
+        long d = v->denom;
+        lval_del(v);
+        return lval_long(d);
+    } else if (v->type == LVAL_LONG) {
+        lval_del(v);
+        return lval_long(1);
+    } else {
+        lval* err = lval_err("Function 'denom' requires Fraction or Integer, got %s", ltype_name(v->type));
+        lval_del(v);
+        return err;
+    }
 }

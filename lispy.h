@@ -28,6 +28,10 @@ struct lval {
     int type;
     float num;
 
+    /* fraction representation */
+    long numer;           /* numerator */
+    long denom;           /* denominator */
+
     /* error and symbol have some string data */
     char* str;
     lbuiltin builtin;
@@ -176,6 +180,12 @@ lval* builtin_new(lenv* e, lval* a);
 lval* builtin_get(lenv* e, lval* a);
 lval* builtin_set(lenv* e, lval* a);
 
+/* fractions */
+lval* lval_frac(long numer, long denom);
+lval* builtin_frac(lenv* e, lval* a);
+lval* builtin_numer(lenv* e, lval* a);
+lval* builtin_denom(lenv* e, lval* a);
+
 /* Possible lval types */
 enum {
     LVAL_ERR,   // 0
@@ -188,7 +198,8 @@ enum {
     LVAL_SEXPR, // 7
     LVAL_QEXPR, // 8
     LVAL_UTYPE, // 9  - user-defined type definition
-    LVAL_UVAL   // 10 - user-defined type instance
+    LVAL_UVAL,  // 10 - user-defined type instance
+    LVAL_FRAC   // 11 - fraction (rational number)
 };
 
 /* Possible error types */
