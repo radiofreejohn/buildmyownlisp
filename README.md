@@ -20,6 +20,7 @@ Read it online: http://www.buildyourownlisp.com/
 * threads - `(spawn {expr})`, `(wait thread-id)`
 * multi-line REPL - continues reading on unclosed brackets
 * debug builtin - `(debug {expr})` for verbose step-by-step evaluation
+* help system - `(help "print")` or `help` in REPL to list all builtins
 
 ## TODO
 
@@ -52,7 +53,6 @@ Read it online: http://www.buildyourownlisp.com/
 ### REPL Improvements
 * tab completion - complete builtins and defined symbols
 * persistent history - save command history to `~/.lispy_history`
-* help system - `(help def)` shows documentation
 
 ### Debugging
 * breakpoints - `(break)` pauses execution
