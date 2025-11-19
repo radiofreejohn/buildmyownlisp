@@ -26,4 +26,6 @@ void         list_replace(list_t* head, int index, void* val);
 void* list_start(list_t* head);
 int          list_end(list_t* head);
 void* list_iter(list_t* head);
+void* list_curr(list_t* head);
+void  list_replace_curr(list_t* head, void* val);
 #endif
