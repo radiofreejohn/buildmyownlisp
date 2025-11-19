@@ -11,15 +11,12 @@ Read it online: http://www.buildyourownlisp.com/
 * floating point type
 * change "cell" array to linked list
 
-## TODO
-* remove for loops using list index (almost done)
-* user defined types
-* type casting
-* internal string representation that's not raw char array
-* use ptest https://github.com/orangeduck/ptest
-* fraction representation of numbers
-
-## Crazy Ideas
-* threads
-* multi-line REPL
-* a builtin eval called debug that's very verbose
+## Features
+* user defined types - `(deftype {Point} {x y})`, `(new {Point} 10 20)`, `(get p {x})`
+* type casting - `(int 3.7)`, `(float 3)`, `(bool 1)`
+* internal string representation (lstr) with length prefix
+* ptest testing framework with 24 tests
+* fraction representation - `(frac 3 4)`, `(numer ...)`, `(denom ...)`
+* threads - `(spawn {expr})`, `(wait thread-id)`
+* multi-line REPL - continues reading on unclosed brackets
+* debug builtin - `(debug {expr})` for verbose step-by-step evaluation
