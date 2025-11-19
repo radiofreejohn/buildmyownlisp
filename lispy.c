@@ -2,6 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <unistd.h>
+#include <termios.h>
+#include <fcntl.h>
+#include <sys/select.h>
+#include <time.h>
 /* this is only included in *BSD/Mac OS X
    I prefer it over hsearch because it allows multiple
    hash tables */
@@ -12,6 +17,11 @@
 #include "list.h"
 
 #include <editline/readline.h>
+
+/* Terminal state for raw mode */
+static struct termios orig_termios;
+static int term_raw_mode = 0;
+static int random_initialized = 0;
 
 /* Thread support structures */
 typedef struct {
@@ -989,10 +999,16 @@ lval* lval_eval_sexpr(lenv* e, lval* v) {
     /* Empty expression */
     if (v->count == 0) { return v; }
 
-    /* Single expression */
-    if (v->count == 1) { return lval_take(v, 0); }
+    /* Single expression - if not a function, just return it */
+    if (v->count == 1) {
+        lval* first = (lval*)list_index(v->cell, 0);
+        if (first->type != LVAL_FUN) {
+            return lval_take(v, 0);
+        }
+        /* Otherwise, fall through to call it with no args */
+    }
 
-    /* Ensure first element is symbol */
+    /* Ensure first element is a function */
     lval* f = lval_pop(v, 0);
     if (f->type != LVAL_FUN) {
         lval* err = lval_err("S-Expression starts with incorrect type. Got %s, expected %s.", ltype_name(f->type), ltype_name(LVAL_FUN));
@@ -1910,6 +1926,56 @@ void lenv_add_builtins(lenv* e) {
         "Wait for a thread to complete and get its result.\n"
         "  Usage: (wait thread)\n"
         "  Example: (wait t)");
+
+    // game/terminal functions
+    lenv_add_builtin(e, "random", builtin_random,
+        "Generate a random number.\n"
+        "  Usage: (random max) or (random min max)\n"
+        "  Example: (random 10) -> 0-9");
+    lenv_add_builtin(e, "sleep-ms", builtin_sleep_ms,
+        "Sleep for milliseconds.\n"
+        "  Usage: (sleep-ms ms)\n"
+        "  Example: (sleep-ms 100)");
+    lenv_add_builtin(e, "term-raw", builtin_term_raw,
+        "Enter terminal raw mode for game input.\n"
+        "  Usage: (term-raw)\n"
+        "  Example: (term-raw)");
+    lenv_add_builtin(e, "term-restore", builtin_term_restore,
+        "Restore terminal to normal mode.\n"
+        "  Usage: (term-restore)\n"
+        "  Example: (term-restore)");
+    lenv_add_builtin(e, "getkey", builtin_getkey,
+        "Get a key press (non-blocking).\n"
+        "  Usage: (getkey)\n"
+        "  Example: (getkey) -> key code or -1");
+    lenv_add_builtin(e, "clear", builtin_clear,
+        "Clear the terminal screen.\n"
+        "  Usage: (clear)\n"
+        "  Example: (clear)");
+    lenv_add_builtin(e, "cursor", builtin_cursor,
+        "Move cursor to position.\n"
+        "  Usage: (cursor row col)\n"
+        "  Example: (cursor 1 1)");
+    lenv_add_builtin(e, "cursor-hide", builtin_cursor_hide,
+        "Hide the cursor.\n"
+        "  Usage: (cursor-hide)\n"
+        "  Example: (cursor-hide)");
+    lenv_add_builtin(e, "cursor-show", builtin_cursor_show,
+        "Show the cursor.\n"
+        "  Usage: (cursor-show)\n"
+        "  Example: (cursor-show)");
+    lenv_add_builtin(e, "mod", builtin_mod,
+        "Modulo operation.\n"
+        "  Usage: (mod a b)\n"
+        "  Example: (mod 10 3) -> 1");
+    lenv_add_builtin(e, "time-ms", builtin_time_ms,
+        "Get current time in milliseconds.\n"
+        "  Usage: (time-ms)\n"
+        "  Example: (time-ms)");
+    lenv_add_builtin(e, "do", builtin_do,
+        "Evaluate expressions in sequence, return last result.\n"
+        "  Usage: (do expr1 expr2 ...)\n"
+        "  Example: (do (print \"a\") (print \"b\"))");
 }
 
 lenv* lenv_copy(lenv* e) {
@@ -2482,4 +2548,206 @@ lval* builtin_denom(lenv* e, lval* a) {
         lval_del(v);
         return err;
     }
+}
+
+/* Game-related builtins */
+
+/* Random number: (random max) or (random min max) */
+lval* builtin_random(lenv* e, lval* a) {
+    if (!random_initialized) {
+        srand((unsigned int)time(NULL));
+        random_initialized = 1;
+    }
+
+    int count = a->count;
+    if (count == 1) {
+        LASSERT_TYPE("random", a, 0, LVAL_LONG);
+        lval* max = lval_pop(a, 0);
+        long result = rand() % (long)max->num;
+        lval_del(max);
+        lval_del(a);
+        return lval_long(result);
+    } else if (count == 2) {
+        LASSERT_TYPE("random", a, 0, LVAL_LONG);
+        LASSERT_TYPE("random", a, 1, LVAL_LONG);
+        lval* min = lval_pop(a, 0);
+        lval* max = lval_pop(a, 0);
+        long result = (long)min->num + (rand() % ((long)max->num - (long)min->num));
+        lval_del(min);
+        lval_del(max);
+        lval_del(a);
+        return lval_long(result);
+    } else {
+        lval_del(a);
+        return lval_err("Function 'random' takes 1 or 2 arguments");
+    }
+}
+
+/* Sleep for milliseconds: (sleep-ms 100) */
+lval* builtin_sleep_ms(lenv* e, lval* a) {
+    LASSERT_NUM("sleep-ms", a, 1);
+    LASSERT_TYPE("sleep-ms", a, 0, LVAL_LONG);
+
+    lval* ms = lval_pop(a, 0);
+    usleep((useconds_t)((long)ms->num * 1000));
+    lval_del(ms);
+    lval_del(a);
+    return lval_sexpr();
+}
+
+/* Enter terminal raw mode: (term-raw) */
+lval* builtin_term_raw(lenv* e, lval* a) {
+    lval_del(a);
+
+    if (term_raw_mode) {
+        return lval_sexpr();
+    }
+
+    /* Check if stdin is a TTY before trying to set raw mode */
+    if (!isatty(STDIN_FILENO)) {
+        return lval_sexpr();  /* Silently succeed if not a TTY */
+    }
+
+    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
+        return lval_err("Failed to get terminal attributes");
+    }
+
+    struct termios raw = orig_termios;
+    raw.c_lflag &= ~(ECHO | ICANON);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+        return lval_err("Failed to set terminal attributes");
+    }
+
+    term_raw_mode = 1;
+    return lval_sexpr();
+}
+
+/* Restore terminal to normal mode: (term-restore) */
+lval* builtin_term_restore(lenv* e, lval* a) {
+    lval_del(a);
+
+    if (!term_raw_mode) {
+        return lval_sexpr();
+    }
+
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+    term_raw_mode = 0;
+    return lval_sexpr();
+}
+
+/* Get key (non-blocking): (getkey) returns key code or -1 */
+lval* builtin_getkey(lenv* e, lval* a) {
+    lval_del(a);
+
+    fd_set readfds;
+    struct timeval tv;
+
+    FD_ZERO(&readfds);
+    FD_SET(STDIN_FILENO, &readfds);
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+
+    if (select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0) {
+        char c;
+        if (read(STDIN_FILENO, &c, 1) == 1) {
+            return lval_long((long)c);
+        }
+    }
+
+    return lval_long(-1);
+}
+
+/* Clear screen: (clear) */
+lval* builtin_clear(lenv* e, lval* a) {
+    lval_del(a);
+    printf("\033[2J\033[H");
+    fflush(stdout);
+    return lval_sexpr();
+}
+
+/* Move cursor: (cursor row col) */
+lval* builtin_cursor(lenv* e, lval* a) {
+    LASSERT_NUM("cursor", a, 2);
+    LASSERT_TYPE("cursor", a, 0, LVAL_LONG);
+    LASSERT_TYPE("cursor", a, 1, LVAL_LONG);
+
+    lval* row = lval_pop(a, 0);
+    lval* col = lval_pop(a, 0);
+
+    printf("\033[%ld;%ldH", (long)row->num, (long)col->num);
+    fflush(stdout);
+
+    lval_del(row);
+    lval_del(col);
+    lval_del(a);
+    return lval_sexpr();
+}
+
+/* Hide cursor: (cursor-hide) */
+lval* builtin_cursor_hide(lenv* e, lval* a) {
+    lval_del(a);
+    printf("\033[?25l");
+    fflush(stdout);
+    return lval_sexpr();
+}
+
+/* Show cursor: (cursor-show) */
+lval* builtin_cursor_show(lenv* e, lval* a) {
+    lval_del(a);
+    printf("\033[?25h");
+    fflush(stdout);
+    return lval_sexpr();
+}
+
+/* Modulo operation: (mod a b) */
+lval* builtin_mod(lenv* e, lval* a) {
+    LASSERT_NUM("mod", a, 2);
+    LASSERT_TYPE("mod", a, 0, LVAL_LONG);
+    LASSERT_TYPE("mod", a, 1, LVAL_LONG);
+
+    lval* x = lval_pop(a, 0);
+    lval* y = lval_pop(a, 0);
+
+    if ((long)y->num == 0) {
+        lval_del(x);
+        lval_del(y);
+        lval_del(a);
+        return lval_err("Division by zero");
+    }
+
+    long result = (long)x->num % (long)y->num;
+    lval_del(x);
+    lval_del(y);
+    lval_del(a);
+    return lval_long(result);
+}
+
+/* Get current time in milliseconds: (time-ms) */
+lval* builtin_time_ms(lenv* e, lval* a) {
+    lval_del(a);
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    long ms = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    return lval_long(ms);
+}
+
+/* Sequence expressions: (do {expr1} {expr2} ...) */
+lval* builtin_do(lenv* e, lval* a) {
+    lval* result = lval_sexpr();
+
+    while (a->count > 0) {
+        lval* x = lval_pop(a, 0);
+        lval_del(result);
+        result = lval_eval(e, x);
+        if (result->type == LVAL_ERR) {
+            lval_del(a);
+            return result;
+        }
+    }
+
+    lval_del(a);
+    return result;
 }

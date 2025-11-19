@@ -1,0 +1,340 @@
+; Tetris in Lispy
+; Terminal-based interactive Tetris game
+
+; Constants
+(def {WIDTH} 10)
+(def {HEIGHT} 20)
+(def {empty} (tail {0}))
+
+; Shapes as flat lists {r0 c0 r1 c1 r2 c2 r3 c3}
+(def {SHAPE-I-H} {0 0 0 1 0 2 0 3})
+(def {SHAPE-I-V} {0 0 1 0 2 0 3 0})
+(def {SHAPE-O} {0 0 0 1 1 0 1 1})
+(def {SHAPE-T-0} {0 1 1 0 1 1 1 2})
+(def {SHAPE-T-1} {0 0 1 0 1 1 2 0})
+(def {SHAPE-T-2} {0 0 0 1 0 2 1 1})
+(def {SHAPE-T-3} {0 1 1 0 1 1 2 1})
+(def {SHAPE-S-H} {0 1 0 2 1 0 1 1})
+(def {SHAPE-S-V} {0 0 1 0 1 1 2 1})
+(def {SHAPE-Z-H} {0 0 0 1 1 1 1 2})
+(def {SHAPE-Z-V} {0 1 1 0 1 1 2 0})
+(def {SHAPE-J-0} {0 0 1 0 1 1 1 2})
+(def {SHAPE-J-1} {0 0 0 1 1 0 2 0})
+(def {SHAPE-J-2} {0 0 0 1 0 2 1 2})
+(def {SHAPE-J-3} {0 1 1 1 2 0 2 1})
+(def {SHAPE-L-0} {0 2 1 0 1 1 1 2})
+(def {SHAPE-L-1} {0 0 1 0 2 0 2 1})
+(def {SHAPE-L-2} {0 0 0 1 0 2 1 0})
+(def {SHAPE-L-3} {0 0 0 1 1 1 2 1})
+
+; Helper: nth element
+(def {nth} (\ {n lst} {if (eq n 0) {eval (head lst)} {nth (- n 1) (tail lst)}}))
+
+; Helper: make row of zeros
+(def {make-row} (\ {w} {if (eq w 0) {empty} {join {0} (make-row (- w 1))}}))
+
+; Helper: make board
+(def {make-board} (\ {h w} {if (eq h 0) {empty} {join (list (make-row w)) (make-board (- h 1) w)}}))
+
+; Helper: set at index
+(def {set-at} (\ {lst i v} {if (eq i 0) {join (list v) (tail lst)} {join (list (eval (head lst))) (set-at (tail lst) (- i 1) v)}}))
+
+; Board accessors
+(def {get-row} (\ {b r} {nth r b}))
+(def {get-cell} (\ {b r c} {nth c (get-row b r)}))
+(def {set-cell} (\ {b r c v} {set-at b r (set-at (get-row b r) c v)}))
+
+; Game state
+(def {board} (make-board HEIGHT WIDTH))
+(def {ptype} 0)
+(def {prot} 0)
+(def {prow} 0)
+(def {pcol} 3)
+(def {score} 0)
+(def {tlines} 0)
+(def {level} 1)
+(def {running} true)
+
+; Previous state for change detection
+(def {prev-prow} -1)
+(def {prev-pcol} -1)
+(def {prev-ptype} -1)
+(def {prev-prot} -1)
+(def {prev-score} -1)
+(def {dirty-all} true)
+
+; Shape getters
+(def {get-t} (\ {pr} {if (eq (mod pr 4) 0) {SHAPE-T-0} {if (eq (mod pr 4) 1) {SHAPE-T-1} {if (eq (mod pr 4) 2) {SHAPE-T-2} {SHAPE-T-3}}}}))
+(def {get-j} (\ {pr} {if (eq (mod pr 4) 0) {SHAPE-J-0} {if (eq (mod pr 4) 1) {SHAPE-J-1} {if (eq (mod pr 4) 2) {SHAPE-J-2} {SHAPE-J-3}}}}))
+(def {get-l} (\ {pr} {if (eq (mod pr 4) 0) {SHAPE-L-0} {if (eq (mod pr 4) 1) {SHAPE-L-1} {if (eq (mod pr 4) 2) {SHAPE-L-2} {SHAPE-L-3}}}}))
+
+(def {get-shape} (\ {pt pr}
+  {if (eq pt 0) {if (eq (mod pr 2) 0) {SHAPE-I-H} {SHAPE-I-V}}
+    {if (eq pt 1) {SHAPE-O}
+      {if (eq pt 2) {get-t pr}
+        {if (eq pt 3) {if (eq (mod pr 2) 0) {SHAPE-S-H} {SHAPE-S-V}}
+          {if (eq pt 4) {if (eq (mod pr 2) 0) {SHAPE-Z-H} {SHAPE-Z-V}}
+            {if (eq pt 5) {get-j pr} {get-l pr}}}}}}}))
+
+; Check if cell is valid
+(def {cell-ok} (\ {r c}
+  {if (lt r 0) {false}
+    {if (ge r HEIGHT) {false}
+      {if (lt c 0) {false}
+        {if (ge c WIDTH) {false}
+          {eq (get-cell board r c) 0}}}}}))
+
+; Check if position valid for shape
+(def {pos-ok} (\ {shape row col}
+  {and (cell-ok (+ row (nth 0 shape)) (+ col (nth 1 shape)))
+    (and (cell-ok (+ row (nth 2 shape)) (+ col (nth 3 shape)))
+      (and (cell-ok (+ row (nth 4 shape)) (+ col (nth 5 shape)))
+        (cell-ok (+ row (nth 6 shape)) (+ col (nth 7 shape)))))}))
+
+; Lock 4 cells onto board
+(def {lock4} (\ {b s r c v}
+  {set-cell (set-cell (set-cell (set-cell b
+    (+ r (nth 0 s)) (+ c (nth 1 s)) v)
+    (+ r (nth 2 s)) (+ c (nth 3 s)) v)
+    (+ r (nth 4 s)) (+ c (nth 5 s)) v)
+    (+ r (nth 6 s)) (+ c (nth 7 s)) v}))
+
+; Lock current piece
+(def {lock-piece} (\ {} {def {board} (lock4 board (get-shape ptype prot) prow pcol (+ 1 ptype))}))
+
+; Check if row is full
+(def {row-full} (\ {r idx} {if (ge idx WIDTH) {true} {if (eq (nth idx r) 0) {false} {row-full r (+ idx 1)}}}))
+
+; Remove row from board
+(def {remove-at} (\ {b idx i} {if (ge i HEIGHT) {empty} {if (eq i idx) {remove-at b idx (+ i 1)} {join (list (nth i b)) (remove-at b idx (+ i 1))}}}))
+
+; Remove line
+(def {do-remove} (\ {idx} {def {board} (join (list (make-row WIDTH)) (remove-at board idx 0))}))
+
+; Clear completed lines recursively
+(def {clear-helper} (\ {idx}
+  {if (lt idx 0)
+    {0}
+    {if (row-full (get-row board idx) 0)
+      {do (do-remove idx) (+ 1 (clear-helper idx))}
+      {clear-helper (- idx 1)}}}))
+
+; Update game stats
+(def {update-stats} (\ {c}
+  {do
+    (def {tlines} (+ tlines c))
+    (def {score} (+ score (* c c 100)))
+    (def {level} (+ 1 (/ tlines 10)))}))
+
+; Clear lines
+(def {clear-lines} (\ {}
+  {do
+    (def {cleared} (clear-helper (- HEIGHT 1)))
+    (if (gt cleared 0) {def {dirty-all} true} {})
+    (update-stats cleared)}))
+
+; Spawn new piece
+(def {spawn} (\ {}
+  {do
+    (def {ptype} (random 7))
+    (def {prot} 0)
+    (def {prow} 0)
+    (def {pcol} 3)
+    (if (not (pos-ok (get-shape ptype prot) prow pcol))
+      {def {running} false}
+      {})}))
+
+; After lock sequence
+(def {after-lock} (\ {} {do (clear-lines) (spawn)}))
+
+; Lock and spawn
+(def {do-lock} (\ {} {do (lock-piece) (def {dirty-all} true) (after-lock)}))
+
+; Move down
+(def {down} (\ {} {if (pos-ok (get-shape ptype prot) (+ prow 1) pcol) {def {prow} (+ prow 1)} {do-lock}}))
+
+; Move left
+(def {left} (\ {} {if (pos-ok (get-shape ptype prot) prow (- pcol 1)) {def {pcol} (- pcol 1)} {}}))
+
+; Move right
+(def {right} (\ {} {if (pos-ok (get-shape ptype prot) prow (+ pcol 1)) {def {pcol} (+ pcol 1)} {}}))
+
+; Rotate
+(def {rotate} (\ {} {if (pos-ok (get-shape ptype (+ prot 1)) prow pcol) {def {prot} (+ prot 1)} {}}))
+
+; Drop one step
+(def {drop-step} (\ {}
+  {if (pos-ok (get-shape ptype prot) (+ prow 1) pcol)
+    {do (def {prow} (+ prow 1)) (def {score} (+ score 2)) (drop-step)}
+    {}}))
+
+; Hard drop
+(def {drop} (\ {} {do (drop-step) (do-lock)}))
+
+; Check piece at cell
+(def {piece-at-helper} (\ {r c s}
+  {or (and (eq r (+ prow (nth 0 s))) (eq c (+ pcol (nth 1 s))))
+    (or (and (eq r (+ prow (nth 2 s))) (eq c (+ pcol (nth 3 s))))
+      (or (and (eq r (+ prow (nth 4 s))) (eq c (+ pcol (nth 5 s))))
+        (and (eq r (+ prow (nth 6 s))) (eq c (+ pcol (nth 7 s))))))}))
+
+(def {piece-at} (\ {r c} {piece-at-helper r c (get-shape ptype prot)}))
+
+; Draw border segment
+(def {dbord} (\ {n} {if (eq n 0) {} {do (print "--") (dbord (- n 1))}}))
+
+; Draw one cell
+(def {draw-one} (\ {r c}
+  {if (piece-at r c)
+    {print "[]"}
+    {if (eq (get-cell board r c) 0)
+      {print "  "}
+      {print "##"}}}))
+
+; Draw cells in row
+(def {dcells} (\ {r c} {if (ge c WIDTH) {} {do (draw-one r c) (dcells r (+ c 1))}}))
+
+; Draw one row
+(def {draw-row} (\ {r} {do (print "|") (dcells r 0) (print "|\n")}))
+
+; Draw all rows
+(def {drows} (\ {r} {if (ge r HEIGHT) {} {do (draw-row r) (drows (+ r 1))}}))
+
+; Check if piece was at row (for previous position)
+(def {piece-was-at-row} (\ {r}
+  {if (lt prev-prow 0) {false}
+    {do
+      (def {ps} (get-shape prev-ptype prev-prot))
+      (or (eq r (+ prev-prow (nth 0 ps)))
+        (or (eq r (+ prev-prow (nth 2 ps)))
+          (or (eq r (+ prev-prow (nth 4 ps)))
+            (eq r (+ prev-prow (nth 6 ps))))))}}))
+
+; Check if piece is at row (for current position)
+(def {piece-is-at-row} (\ {r}
+  {do
+    (def {cs} (get-shape ptype prot))
+    (or (eq r (+ prow (nth 0 cs)))
+      (or (eq r (+ prow (nth 2 cs)))
+        (or (eq r (+ prow (nth 4 cs)))
+          (eq r (+ prow (nth 6 cs))))))}))
+
+; Check if row needs redraw
+(def {row-dirty} (\ {r} {or (piece-was-at-row r) (piece-is-at-row r)}))
+
+; Draw row at specific position
+(def {draw-row-at} (\ {r} {do (cursor (+ r 2) 1) (draw-row r)}))
+
+; Draw only dirty rows
+(def {draw-dirty-rows} (\ {r}
+  {if (ge r HEIGHT)
+    {}
+    {do
+      (if (row-dirty r) {draw-row-at r} {})
+      (draw-dirty-rows (+ r 1))}}))
+
+; Update previous state
+(def {update-prev} (\ {}
+  {do
+    (def {prev-prow} prow)
+    (def {prev-pcol} pcol)
+    (def {prev-ptype} ptype)
+    (def {prev-prot} prot)
+    (def {prev-score} score)}))
+
+; Draw game
+(def {draw} (\ {}
+  {if dirty-all
+    {do
+      (cursor 1 1)
+      (print "+")
+      (dbord WIDTH)
+      (print "+\n")
+      (drows 0)
+      (print "+")
+      (dbord WIDTH)
+      (print "+\n\n")
+      (print "Score: " score "  Lines: " tlines "  Level: " level "    \n")
+      (print "A/D=Move  W=Rotate  S=Down  Space=Drop  Q=Quit\n")
+      (def {dirty-all} false)
+      (update-prev)}
+    {do
+      (draw-dirty-rows 0)
+      (if (ne score prev-score)
+        {do (cursor (+ HEIGHT 4) 1) (print "Score: " score "  Lines: " tlines "  Level: " level "    \n")}
+        {})
+      (update-prev)}}))
+
+; Handle key
+(def {handle-key} (\ {k}
+  {if (or (eq k 113) (eq k 81)) {def {running} false}
+    {if (or (eq k 97) (eq k 65)) {left}
+      {if (or (eq k 100) (eq k 68)) {right}
+        {if (or (eq k 119) (eq k 87)) {rotate}
+          {if (or (eq k 115) (eq k 83)) {down}
+            {if (eq k 32) {drop} {}}}}}}}))
+
+; Process input helper
+(def {input-helper} (\ {k} {if (ne k -1) {handle-key k} {}}))
+
+; Process input
+(def {input} (\ {} {input-helper (getkey)}))
+
+; Game over screen
+(def {game-over-screen} (\ {}
+  {do
+    (cursor (+ HEIGHT 5) 1)
+    (print "\nGAME OVER! Score: " score "\n")}))
+
+; Game loop body
+(def {loop-body} (\ {last now spd}
+  {do
+    (input)
+    (if (gt (- now last) spd) {down} {})
+    (draw)
+    (sleep-ms 16)
+    (loop (if (gt (- now last) spd) {now} {last}))}))
+
+; Calculate speed
+(def {calc-spd} (\ {} {if (lt (- 500 (* level 40)) 50) {50} {(- 500 (* level 40))}}))
+
+; Game loop
+(def {loop} (\ {last}
+  {if (not running)
+    {game-over-screen}
+    {loop-body last (time-ms) (calc-spd)}}))
+
+; Wait for keypress
+(def {waitkey} (\ {} {if (eq (getkey) -1) {do (sleep-ms 50) (waitkey)} {}}))
+
+; Initialize game
+(def {init-game} (\ {}
+  {do
+    (def {board} (make-board HEIGHT WIDTH))
+    (def {score} 0)
+    (def {tlines} 0)
+    (def {level} 1)
+    (def {running} true)
+    (def {prev-prow} -1)
+    (def {prev-pcol} -1)
+    (def {prev-ptype} -1)
+    (def {prev-prot} -1)
+    (def {prev-score} -1)
+    (def {dirty-all} true)
+    (spawn)}))
+
+; Start game
+(def {start} (\ {}
+  {do
+    (term-raw)
+    (cursor-hide)
+    (clear)
+    (print "TETRIS in Lispy!\n\nPress any key to start...\n")
+    (waitkey)
+    (init-game)
+    (clear)
+    (loop (time-ms))
+    (cursor-show)
+    (term-restore)}))
+
+(start)

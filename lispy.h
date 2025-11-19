@@ -200,6 +200,20 @@ lval* builtin_frac(lenv* e, lval* a);
 lval* builtin_numer(lenv* e, lval* a);
 lval* builtin_denom(lenv* e, lval* a);
 
+/* game/terminal functions */
+lval* builtin_random(lenv* e, lval* a);
+lval* builtin_sleep_ms(lenv* e, lval* a);
+lval* builtin_term_raw(lenv* e, lval* a);
+lval* builtin_term_restore(lenv* e, lval* a);
+lval* builtin_getkey(lenv* e, lval* a);
+lval* builtin_clear(lenv* e, lval* a);
+lval* builtin_cursor(lenv* e, lval* a);
+lval* builtin_cursor_hide(lenv* e, lval* a);
+lval* builtin_cursor_show(lenv* e, lval* a);
+lval* builtin_mod(lenv* e, lval* a);
+lval* builtin_time_ms(lenv* e, lval* a);
+lval* builtin_do(lenv* e, lval* a);
+
 /* Possible lval types */
 enum {
     LVAL_ERR,   // 0
