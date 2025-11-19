@@ -444,6 +444,136 @@ lval* builtin_error(lenv* e, lval* a) {
     return err;
 }
 
+/* Helper to print indentation */
+static void debug_indent(int depth) {
+    for (int i = 0; i < depth; i++) {
+        printf("  ");
+    }
+}
+
+/* Debug version of lval_eval_sexpr */
+static lval* lval_eval_sexpr_debug(lenv* e, lval* v, int depth) {
+    debug_indent(depth);
+    printf("EVAL S-EXPR: ");
+    lval_print(v);
+    printf("\n");
+
+    /* Evaluate the children */
+    int child_num = 0;
+    list_start(v->cell);
+    while (list_end(v->cell)) {
+        lval* l = list_curr(v->cell);
+        debug_indent(depth + 1);
+        printf("ARG %d: ", child_num);
+        lval_print(l);
+        printf("\n");
+        lval* evaluated = lval_eval_debug(e, l, depth + 1);
+        list_replace_curr(v->cell, evaluated);
+        debug_indent(depth + 1);
+        printf("ARG %d => ", child_num);
+        lval_print(evaluated);
+        printf("\n");
+        list_iter(v->cell);
+        child_num++;
+    }
+
+    /* Error checking */
+    int err_index = 0;
+    list_start(v->cell);
+    while (list_end(v->cell)) {
+        lval* l = list_curr(v->cell);
+        if (l->type == LVAL_ERR) {
+            return lval_take(v, err_index);
+        }
+        err_index++;
+        list_iter(v->cell);
+    }
+
+    /* Empty expression */
+    if (v->count == 0) {
+        debug_indent(depth);
+        printf("=> (empty)\n");
+        return v;
+    }
+
+    /* Single expression */
+    if (v->count == 1) {
+        lval* result = lval_take(v, 0);
+        debug_indent(depth);
+        printf("=> ");
+        lval_print(result);
+        printf("\n");
+        return result;
+    }
+
+    /* Ensure first element is function */
+    lval* f = lval_pop(v, 0);
+    if (f->type != LVAL_FUN) {
+        lval* err = lval_err("S-Expression starts with incorrect type. Got %s, expected %s.", ltype_name(f->type), ltype_name(LVAL_FUN));
+        lval_del(f); lval_del(v);
+        return err;
+    }
+
+    /* Call function */
+    debug_indent(depth);
+    printf("CALL: ");
+    lval_print(f);
+    printf(" with %d args\n", v->count);
+
+    lval* result = lval_call(e, f, v);
+    lval_del(f);
+
+    debug_indent(depth);
+    printf("=> ");
+    lval_print(result);
+    printf("\n");
+
+    return result;
+}
+
+/* Debug version of lval_eval - verbose output */
+lval* lval_eval_debug(lenv* e, lval* v, int depth) {
+    if (v->type == LVAL_SYM) {
+        debug_indent(depth);
+        printf("LOOKUP: %s\n", v->str);
+        lval* x = lenv_get(e, v);
+        debug_indent(depth);
+        printf("=> ");
+        lval_print(x);
+        printf("\n");
+        lval_del(v);
+        return x;
+    }
+    /* Evaluate S-expressions */
+    if (v->type == LVAL_SEXPR) {
+        return lval_eval_sexpr_debug(e, v, depth);
+    }
+    /* all other lval types remain the same */
+    debug_indent(depth);
+    printf("LITERAL: ");
+    lval_print(v);
+    printf("\n");
+    return v;
+}
+
+/* Debug builtin - verbose evaluation */
+lval* builtin_debug(lenv* e, lval* a) {
+    LASSERT_NUM("debug", a, 1);
+    LASSERT_TYPE("debug", a, 0, LVAL_QEXPR);
+
+    lval* x = lval_pop(a, 0);
+    lval_del(a);
+
+    /* Convert Q-expression to S-expression for evaluation */
+    x->type = LVAL_SEXPR;
+
+    printf("\n=== DEBUG EVAL ===\n");
+    lval* result = lval_eval_debug(e, x, 0);
+    printf("=== END DEBUG ===\n\n");
+
+    return result;
+}
+
 lval* lval_call(lenv* e, lval* f, lval* a) {
     // if builtin, call it
     if (f->builtin) { return f->builtin(e, a); }
@@ -1362,6 +1492,9 @@ void lenv_add_builtins(lenv* e) {
     lenv_add_builtin(e, "frac", builtin_frac);
     lenv_add_builtin(e, "numer", builtin_numer);
     lenv_add_builtin(e, "denom", builtin_denom);
+
+    // debugging
+    lenv_add_builtin(e, "debug", builtin_debug);
 }
 
 lenv* lenv_copy(lenv* e) {
